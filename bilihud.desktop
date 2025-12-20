@@ -8,4 +8,4 @@ Type=Application
 Categories=Utility;Network;
 Terminal=false
 StartupNotify=true
-wmclass=bilihud
+StartupWMClass=bilihud
