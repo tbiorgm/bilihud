@@ -1,6 +1,9 @@
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+[tool.hatch.build.targets.wheel.force-include]
+"vendor/blivedm/blivedm" = "src/bilihud/vendor/blivedm"
+
 
 [project]
 name = "bilihud"
@@ -23,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Video"
 ]
 license = {text = "MIT"}
