@@ -23,7 +23,7 @@
 * 美观的UI界面，支持不同用户等级的颜色标识
 * 支持连接/断开直播间
 * 显示用户名、舰长/VIP标识
-* **注意：** 仅支持 **X11** 环境（推荐 KDE X11）。由于 Wayland 的安全机制，无法实现完美的鼠标穿透（Pass-through）模式，因此暂不支持纯 Wayland 环境。
+* **注意：** 仅支持 **X11** 环境(包括 XWayland)（推荐 KDE X11）。由于 Wayland 的安全机制，无法实现完美的鼠标穿透（Pass-through）模式，因此暂不支持纯 Wayland 环境。
 
 ## 极速上手
 
@@ -65,16 +65,25 @@ python -m src.bilihud.main
 *   **支持浏览器**: Chrome, Edge, Firefox。
 *   **数据安全**: 您的 Cookies 仅在本地内存中使用，**绝不会**被发送到任何第三方服务器。
 
-### 手动配置 (可选)
 
-如果自动读取失败，或者您不希望程序读取浏览器 Cookies，可以在代码中手动传入 `SESSDATA`：
 
-```python
-from bilihud.danmaku_widget import DanmakuWidget
+## 打包与发行 (Packaging)
 
-# 在创建窗口时手动传入 SESSDATA
-danmaku_widget = DanmakuWidget(room_id=123456, sessdata="你的SESSDATA")
+### Arch Linux
+
+本项目已发布至 AUR ([bilihud-git](https://aur.archlinux.org/packages/bilihud-git))。推荐使用 `paru` 或其他 helper 快速安装：
+
+```bash
+paru -S bilihud-git
 ```
+
+此外，`packaging/arch/PKGBUILD` 提供了本地打包的示例文件。
+
+### Gentoo Linux
+
+如果您是 Gentoo 用户，相关包已包含在 [我的个人 overlay](https://github.com/locez/locez-overlay) 中，添加后即可安装。
+
+本地 ebuild 示例文件位于: `packaging/gentoo/`
 
 ## 鸣谢
 
