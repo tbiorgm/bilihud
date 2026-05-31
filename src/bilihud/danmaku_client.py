@@ -1,10 +1,11 @@
-# -*- coding: utf-8 -*-
 import asyncio
-import http.cookies
-from typing import Optional, Callable
+from collections.abc import Callable
+
 import aiohttp
 import blivedm
 import blivedm.models.web as web_models
+
+from .auth import AuthManager
 
 
 class DanmakuClient:
@@ -15,13 +16,13 @@ class DanmakuClient:
     def __init__(self, room_id: int, sessdata: str = ''):
         self.room_id = room_id
         self.sessdata = sessdata
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.client: Optional[blivedm.BLiveClient] = None
-        self.handler: Optional[DanmakuHandler] = None
-        self.on_danmaku_received: Optional[Callable[[web_models.DanmakuMessage], None]] = None
-        self.on_gift_received: Optional[Callable[[web_models.GiftMessage], None]] = None
-        self.on_interact_received: Optional[Callable[[web_models.InteractWordV2Message], None]] = None
-        self.on_login_failed: Optional[Callable[[str], None]] = None # callback(message)
+        self.session: aiohttp.ClientSession | None = None
+        self.client: blivedm.BLiveClient | None = None
+        self.handler: DanmakuHandler | None = None
+        self.on_danmaku_received: Callable[[web_models.DanmakuMessage], None] | None = None
+        self.on_gift_received: Callable[[web_models.GiftMessage], None] | None = None
+        self.on_interact_received: Callable[[web_models.InteractWordV2Message], None] | None = None
+        self.on_login_failed: Callable[[str], None] | None = None # callback(message)
 
     def set_danmaku_callback(self, callback: Callable[[web_models.DanmakuMessage], None]):
         """设置弹幕接收回调函数"""
@@ -41,78 +42,28 @@ class DanmakuClient:
 
     async def start(self):
         """在事件循环中启动弹幕客户端"""
-        # 初始化session
-        cookies = http.cookies.SimpleCookie()
-        
         # 在Executor中运行Cookie加载，避免阻塞主线程和可能的线程冲突
         loop = asyncio.get_running_loop()
-        
-        def load_cookies_sync():
-            _cookies = {}
-            _msg = None
-            
-            # 尝试优先从Keyring加载Cookies
-            from .auth import AuthManager
-            auth_manager = AuthManager()
-            saved_cookies = auth_manager.load_cookies()
-            
-            loaded_from_keyring = False
-            if saved_cookies:
-                # 验证Cookie有效性 (这里为了速度先不验证，或者需要异步转同步，太麻烦，
-                # 其实直接信任keyring里的，因为expire了也会在连接时失败)
-                # 暂时仅仅加载
-                for k, v in saved_cookies.items():
-                    _cookies[k] = v
-                print("Successfully loaded validated cookies from Keyring")
-                loaded_from_keyring = True
-            
-            # 如果没有有效的Keyring Cookies，尝试从浏览器加载
-            if not loaded_from_keyring:
-                try:
-                    browser_cookies = load_bilibili_cookies()
-                    if browser_cookies:
-                        # print("Successfully loaded cookies from browser")
-                        for cookie in browser_cookies:
-                            _cookies[cookie.name] = cookie.value
-                except Exception as e:
-                    print(f"Browser cookie load failed: {e}")
-            
-            return _cookies, saved_cookies is not None
+        auth_manager = AuthManager()
 
         try:
-            loaded_cookies, is_keyring = await loop.run_in_executor(None, load_cookies_sync)
-            
-            # 如果是从keyring加载的，我们还需要验证一下有效性
-            # 但为了简化，我们先直接用。如果验证逻辑包含网络请求，放在executor里比较麻烦因为要用requests
-            # 或者我们在这里异步验证
+            loaded_cookies, is_keyring = await loop.run_in_executor(None, auth_manager.load_auth_cookies)
             if is_keyring:
-                 from .auth import AuthManager
-                 auth_manager = AuthManager()
-                 if not await auth_manager.validate_session(loaded_cookies):
-                     print("Keyring cookies expired")
-                     if self.on_login_failed:
-                         self.on_login_failed("本地保存的登录信息已失效，请重新登录")
-                     # 失效了就清空，但不要回退到浏览器，因为用户意图是使用keyring
-                     loaded_cookies = {} 
+                if not await auth_manager.validate_session(loaded_cookies):
+                    print("Keyring cookies expired")
+                    if self.on_login_failed:
+                        self.on_login_failed("本地保存的登录信息已失效，请重新登录")
+                    # 失效了就清空，但不要回退到浏览器，因为用户意图是使用keyring
+                    loaded_cookies = {}
 
-            for k, v in loaded_cookies.items():
-                cookies[k] = v
-                
         except Exception as e:
             print(f"Error loading cookies: {e}")
-        
-        if self.sessdata:
-            cookies['SESSDATA'] = self.sessdata
-            
-        # 确保domain设置正确
-        if 'SESSDATA' in cookies:
-            cookies['SESSDATA']['domain'] = 'bilibili.com'
+            loaded_cookies = {}
 
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
-        }
-        self.session = aiohttp.ClientSession(headers=headers)
-        self.session.cookie_jar.update_cookies(cookies)
+        if self.sessdata:
+            loaded_cookies["SESSDATA"] = self.sessdata
+
+        self.session = auth_manager.create_session_from_cookies(loaded_cookies)
 
         # 创建客户端和处理器
         self.client = blivedm.BLiveClient(self.room_id, session=self.session)
@@ -130,20 +81,20 @@ class DanmakuClient:
         """发送弹幕"""
         if not self.session or not message:
             return False, "会话未初始化或消息为空"
-            
+
         url = 'https://api.live.bilibili.com/msg/send'
-        
+
         # 从cookie中获取csrf token (bili_jct)
         csrf_token = ''
         for cookie in self.session.cookie_jar:
             if cookie.key == 'bili_jct':
                 csrf_token = cookie.value
                 break
-                
+
         if not csrf_token:
             # print("Error: No csrf_token found in cookies")
             return False, "未找到CSRF Token，请重新连接或检查Cookie"
-            
+
         data = {
             'bubble': '0',
             'msg': message,
@@ -155,7 +106,7 @@ class DanmakuClient:
             'csrf': csrf_token,
             'csrf_token': csrf_token,
         }
-        
+
         try:
             async with self.session.post(url, data=data) as res:
                 if res.status != 200:
@@ -184,7 +135,7 @@ class DanmakuHandler(blivedm.BaseHandler):
 
     def __init__(self):
         super().__init__()
-        self.danmaku_client: Optional[DanmakuClient] = None
+        self.danmaku_client: DanmakuClient | None = None
 
     def set_danmaku_client(self, client: DanmakuClient):
         self.danmaku_client = client
@@ -198,7 +149,7 @@ class DanmakuHandler(blivedm.BaseHandler):
         """处理礼物消息"""
         if self.danmaku_client and self.danmaku_client.on_gift_received:
             self.danmaku_client.on_gift_received(message)
-            
+
     def _on_interact_word_v2(self, client: blivedm.BLiveClient, message: web_models.InteractWordV2Message):
         """处理进入房间/关注"""
         if self.danmaku_client and self.danmaku_client.on_interact_received:
@@ -208,33 +159,3 @@ class DanmakuHandler(blivedm.BaseHandler):
         """处理醒目留言"""
         # 可以在这里处理醒目留言
         pass
-
-
-def load_bilibili_cookies():
-    """尝试从浏览器加载B站Cookies"""
-    try:
-        import browser_cookie3
-        # 尝试从Chrome加载
-        # print("Attempting to load cookies from Chrome...")
-        cj = browser_cookie3.chrome(domain_name='.bilibili.com')
-        return cj
-    except Exception as e:
-        print(f"Chrome cookies failed: {e}")
-        try:
-            import browser_cookie3
-            # 尝试从Edge加载
-            cj = browser_cookie3.edge(domain_name='.bilibili.com')
-            return cj
-        except Exception as e:
-            print(f"Edge cookies failed: {e}")
-            try:
-                import browser_cookie3
-                # 尝试从Firefox加载
-                cj = browser_cookie3.firefox(domain_name='.bilibili.com')
-                return cj
-            except Exception as e:
-                print(f"Firefox cookies failed: {e}")
-                return None
-
-
-

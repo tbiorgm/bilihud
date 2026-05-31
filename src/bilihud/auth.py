@@ -1,14 +1,12 @@
-# -*- coding: utf-8 -*-
-import asyncio
-import aiohttp
-import qrcode
-import qrcode
+import http.cookies
 import json
 import logging
-import time
-from typing import Optional, Dict, Tuple, Any
+from collections.abc import Mapping
 from io import BytesIO
-from PIL import Image
+from typing import Any
+
+import aiohttp
+import qrcode
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,32 +14,60 @@ logger = logging.getLogger(__name__)
 
 SERVICE_ID = "bilihud"
 USERNAME_KEY = "bilibili_cookies"
+COMMON_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+
+def load_bilibili_cookies() -> Any | None:
+    """Try to load Bilibili cookies from supported browsers."""
+    try:
+        import browser_cookie3
+
+        return browser_cookie3.chrome(domain_name=".bilibili.com")
+    except Exception as e:
+        logger.info("Chrome cookie load failed: %s", e)
+
+    try:
+        import browser_cookie3
+
+        return browser_cookie3.edge(domain_name=".bilibili.com")
+    except Exception as e:
+        logger.info("Edge cookie load failed: %s", e)
+
+    try:
+        import browser_cookie3
+
+        return browser_cookie3.firefox(domain_name=".bilibili.com")
+    except Exception as e:
+        logger.info("Firefox cookie load failed: %s", e)
+        return None
+
 
 class AuthManager:
     """
     Manage Bilibili Authentication via QR Code
     """
-    
+
     BASE_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
     POLL_URL = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
 
     def __init__(self):
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.session: aiohttp.ClientSession | None = None
 
-    async def get_qrcode(self) -> Tuple[Optional[str], Optional[str]]:
+    async def get_qrcode(self) -> tuple[str | None, str | None]:
         """
         Get QR code URL and Key
         Returns: (url, qrcode_key)
         """
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        headers = {"User-Agent": COMMON_USER_AGENT}
         async with aiohttp.ClientSession(headers=headers) as session:
             try:
                 async with session.get(self.BASE_URL) as response:
                     data = await response.json()
-                    if data['code'] == 0:
-                        return data['data']['url'], data['data']['qrcode_key']
+                    if data["code"] == 0:
+                        return data["data"]["url"], data["data"]["qrcode_key"]
                     else:
                         logger.error(f"Failed to get QR code: {data}")
                         return None, None
@@ -49,7 +75,7 @@ class AuthManager:
                 logger.error(f"Exception requesting QR code: {e}")
                 return None, None
 
-    def generate_qr_image(self, url: str) -> Optional[BytesIO]:
+    def generate_qr_image(self, url: str) -> BytesIO | None:
         """
         Generate QR code image from URL
         Returns: BytesIO object containing PNG image
@@ -73,38 +99,36 @@ class AuthManager:
             logger.error(f"Failed to generate QR image: {e}")
             return None
 
-    async def poll_status(self, qrcode_key: str) -> Tuple[int, str, Optional[Dict]]:
+    async def poll_status(self, qrcode_key: str) -> tuple[int, str, dict[str, str] | None]:
         """
         Poll login status
         Returns: (code, message, cookies_dict)
         code: 0=Success, 86101=Scanned, 86090=Not Scanned, 86038=Expired
         """
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        headers = {"User-Agent": COMMON_USER_AGENT}
         async with aiohttp.ClientSession(headers=headers) as session:
             try:
-                params = {'qrcode_key': qrcode_key}
+                params = {"qrcode_key": qrcode_key}
                 async with session.get(self.POLL_URL, params=params) as response:
                     data = await response.json()
-                    
-                    if data['code'] == 0:
-                        code = data['data']['code']
-                        msg = data['data']['message']
-                        
+
+                    if data["code"] == 0:
+                        code = data["data"]["code"]
+                        msg = data["data"]["message"]
+
                         if code == 0:
                             # Login success, extract cookies
                             cookies = {}
                             for cookie in session.cookie_jar:
                                 cookies[cookie.key] = cookie.value
-                            
+
                             # Also check Set-Cookie headers directly if needed, usually cookie_jar has them
                             # Filter for essential cookies
-                            essential_keys = ['SESSDATA', 'bili_jct', 'DedeUserID', 'DedeUserID__ckMd5']
+                            essential_keys = ["SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5"]
                             filtered_cookies = {k: v for k, v in cookies.items() if k in essential_keys}
-                            
+
                             return 0, "登录成功", filtered_cookies
-                        
+
                         return code, msg, None
                     else:
                         return -1, f"API Error: {data['code']}", None
@@ -112,7 +136,7 @@ class AuthManager:
                 logger.error(f"Exception polling status: {e}")
                 return -1, str(e), None
 
-    def save_cookies(self, cookies: Dict[str, str]) -> bool:
+    def save_cookies(self, cookies: dict[str, str]) -> bool:
         """
         Save cookies securely using keyring
         """
@@ -125,7 +149,7 @@ class AuthManager:
             logger.error(f"Failed to save cookies to keyring: {e}")
             return False
 
-    def load_cookies(self) -> Optional[Dict[str, str]]:
+    def load_cookies(self) -> dict[str, str] | None:
         """
         Load cookies from keyring
         """
@@ -138,7 +162,7 @@ class AuthManager:
         except Exception as e:
             logger.error(f"Failed to load cookies from keyring: {e}")
             return None
-            
+
     def clear_cookies(self):
         """Clear stored cookies"""
         try:
@@ -147,22 +171,61 @@ class AuthManager:
         except Exception as e:
             logger.error(f"Failed to delete cookies: {e}")
 
-    async def validate_session(self, cookies: Dict[str, str]) -> bool:
+    def load_auth_cookies(self, prefer_keyring: bool = True) -> tuple[dict[str, str], bool]:
+        """Load auth cookies from keyring first, falling back to browser cookies."""
+        if prefer_keyring:
+            saved_cookies = self.load_cookies()
+            if saved_cookies:
+                return dict(saved_cookies), True
+
+        try:
+            browser_cookies = load_bilibili_cookies()
+        except Exception as e:
+            logger.warning("Browser cookie load failed: %s", e)
+            return {}, False
+
+        if not browser_cookies:
+            return {}, False
+
+        return {cookie.name: cookie.value for cookie in browser_cookies}, False
+
+    def create_session_from_cookies(self, cookies: Mapping[str, str]) -> aiohttp.ClientSession:
+        """Create an aiohttp session configured with Bilibili auth cookies."""
+        cookie_jar = http.cookies.SimpleCookie()
+        for name, value in cookies.items():
+            cookie_jar[name] = value
+
+        if "SESSDATA" in cookie_jar:
+            cookie_jar["SESSDATA"]["domain"] = "bilibili.com"
+
+        session = aiohttp.ClientSession(headers={"User-Agent": COMMON_USER_AGENT})
+        session.cookie_jar.update_cookies(cookie_jar)
+        return session
+
+    async def create_authenticated_session(
+        self, validate_keyring: bool = True
+    ) -> tuple[aiohttp.ClientSession, bool]:
+        """Create an aiohttp session from keyring or browser cookies."""
+        cookies, from_keyring = self.load_auth_cookies()
+        if from_keyring and validate_keyring and not await self.validate_session(cookies):
+            logger.info("Keyring cookies expired")
+            cookies = {}
+
+        return self.create_session_from_cookies(cookies), from_keyring
+
+    async def validate_session(self, cookies: dict[str, str]) -> bool:
         """
         Validate if the current cookies are logged in
         """
         url = "https://api.bilibili.com/x/web-interface/nav"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+        headers = {"User-Agent": COMMON_USER_AGENT}
         try:
             async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
                 async with session.get(url) as resp:
                     data = await resp.json()
-                    if data['code'] == 0:
-                         return data['data'].get('isLogin', False)
+                    if data["code"] == 0:
+                        return data["data"].get("isLogin", False)
                     return False
         except Exception as e:
             logger.error(f"Session validation failed: {e}")
             return False
-
