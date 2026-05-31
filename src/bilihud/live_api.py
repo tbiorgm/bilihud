@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 import hashlib
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any
 from urllib.parse import urlencode
 
 import aiohttp
@@ -38,7 +38,7 @@ class StartLiveResult:
 
 
 class LiveApiError(RuntimeError):
-    def __init__(self, message: str, code: Optional[int] = None):
+    def __init__(self, message: str, code: int | None = None):
         super().__init__(message)
         self.code = code
 
@@ -58,7 +58,7 @@ def format_face_auth_url(uid: str | int) -> str:
     )
 
 
-def get_cookie_value(session: aiohttp.ClientSession, name: str) -> Optional[str]:
+def get_cookie_value(session: aiohttp.ClientSession, name: str) -> str | None:
     for cookie in session.cookie_jar:
         if cookie.key == name:
             return cookie.value
@@ -102,8 +102,8 @@ async def _request_json(
     method: str,
     endpoint: str,
     *,
-    data: Optional[Mapping[str, str]] = None,
-    headers: Optional[Mapping[str, str]] = None,
+    data: Mapping[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
     require_sign: bool = False,
     raw: bool = False,
 ) -> Any:
@@ -146,7 +146,7 @@ async def get_area_list(session: aiohttp.ClientSession) -> list[dict[str, Any]]:
     return list(data)
 
 
-async def get_live_version(session: aiohttp.ClientSession, now_ms: Optional[int] = None) -> LiveVersion:
+async def get_live_version(session: aiohttp.ClientSession, now_ms: int | None = None) -> LiveVersion:
     timestamp = str(now_ms if now_ms is not None else int(time.time() * 1000))
     query = app_sign({"system_version": "2", "ts": timestamp})
     data = await _request_json(
@@ -205,7 +205,7 @@ async def start_live(
     area_id: str,
     version: str,
     build: str,
-    now_ms: Optional[int] = None,
+    now_ms: int | None = None,
 ) -> StartLiveResult:
     csrf = require_csrf(session)
     timestamp = str(now_ms if now_ms is not None else int(time.time() * 1000))
