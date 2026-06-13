@@ -1033,7 +1033,6 @@ class DanmakuWidget(QWidget):
                 self.layout().activate()
                 self.danmaku_list.update()
                 self.update()
-                QApplication.processEvents()
                 
             except Exception as e:
                 print(f"Failed to set Wayland passthrough: {e}")
@@ -1221,11 +1220,21 @@ class DanmakuWidget(QWidget):
                 print(f"Connection failed: {e}")
         else:
             # 断开
-            if self.danmaku_client is not None:
-                await self.danmaku_client.stop()
+            self.connect_button.setEnabled(False)
+            try:
+                if self.danmaku_client is not None:
+                    await self.danmaku_client.stop()
+            except Exception as e:
+                self.connect_button.setText("断开")
+                self.connect_button.setChecked(True)
+                self.connect_button.setEnabled(True)
+                self.add_system_message(f"断开失败: {e}", "error")
+                print(f"Disconnect failed: {e}")
+                return
             self.danmaku_client = None
             self.connect_button.setText("连接")
             self.connect_button.setChecked(False)
+            self.connect_button.setEnabled(True)
             self.connect_button.setStyleSheet("""
                 QPushButton {
                     color: white;

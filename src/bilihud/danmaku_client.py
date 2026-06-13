@@ -122,12 +122,54 @@ class DanmakuClient:
             print(f"Send danmaku exception: {e}")
             return False, f"发送异常: {str(e)}"
 
-    async def stop(self):
-        """停止弹幕客户端"""
-        if self.client:
-            await self.client.stop_and_close()
-        if self.session:
-            await self.session.close()
+    async def stop(self, normal_timeout: float = 3.0, forced_timeout: float = 3.0):
+        """停止弹幕客户端，并确认底层网络任务和会话都已关闭。"""
+        client = self.client
+        session = self.session
+        join_task: asyncio.Task | None = None
+        stop_error: BaseException | None = None
+
+        if client:
+            try:
+                if getattr(client, "is_running", False):
+                    client.stop()
+                    join_task = asyncio.create_task(client.join())
+                    try:
+                        await asyncio.wait_for(asyncio.shield(join_task), timeout=normal_timeout)
+                    except TimeoutError:
+                        if session and not session.closed:
+                            await session.close()
+                        try:
+                            await asyncio.wait_for(asyncio.shield(join_task), timeout=forced_timeout)
+                        except TimeoutError as exc:
+                            stop_error = DanmakuShutdownError(
+                                f"弹幕连接未能在强制关闭后停止，room_id={self.room_id}"
+                            )
+                            stop_error.__cause__ = exc
+                            join_task.cancel()
+                            await asyncio.gather(join_task, return_exceptions=True)
+                    except Exception as exc:
+                        stop_error = exc
+            finally:
+                try:
+                    await client.close()
+                except Exception as exc:
+                    if stop_error is None:
+                        stop_error = exc
+
+        if session and not session.closed:
+            await session.close()
+        if stop_error is None:
+            self.client = None
+            self.session = None
+            self.handler = None
+
+        if stop_error is not None:
+            raise stop_error
+
+
+class DanmakuShutdownError(RuntimeError):
+    pass
 
 
 class DanmakuHandler(blivedm.BaseHandler):
