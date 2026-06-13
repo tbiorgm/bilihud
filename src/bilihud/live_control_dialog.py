@@ -57,6 +57,18 @@ from .utils import load_config, save_config, validate_room_id
 logger = logging.getLogger(__name__)
 
 
+def start_live_confirmation_needed(obs_streaming: bool | None) -> bool:
+    return obs_streaming is True
+
+
+def obs_cleanup_after_stop_state(obs_streaming: bool | None) -> tuple[bool, str]:
+    if obs_streaming is True:
+        return True, "streaming"
+    if obs_streaming is False:
+        return False, "not_streaming"
+    return False, "unknown"
+
+
 class LiveControlDialog(QDialog):
     live_status_changed = pyqtSignal(bool)
 
@@ -532,6 +544,23 @@ class LiveControlDialog(QDialog):
             password=self.obs_password_input.text(),
         )
 
+    async def _current_obs_streaming(self) -> bool | None:
+        client = self._obs_client()
+        if client is None:
+            return None
+        try:
+            streaming = await client.is_streaming()
+        except ObsApiError as exc:
+            logger.info("Failed to query OBS stream status: %s", exc)
+            self._obs_connected = False
+            return None
+        except Exception:
+            logger.exception("Unexpected OBS stream status failure")
+            self._obs_connected = False
+            return None
+        self._obs_connected = True
+        return streaming
+
     def _has_csrf(self) -> bool:
         return bool(self.session and not self.session.closed and get_cookie_value(self.session, "bili_jct"))
 
@@ -740,6 +769,18 @@ class LiveControlDialog(QDialog):
 
         self._set_busy(True, "正在开始直播...")
         try:
+            obs_streaming = await self._current_obs_streaming()
+            if not self._is_current_action(action_generation, session):
+                return
+            if start_live_confirmation_needed(obs_streaming):
+                self._set_busy(False)
+                if not await self._confirm_switch_obs_stream():
+                    self.set_status("已取消开播，OBS 推流保持不变。")
+                    return
+                if not self._is_current_action(action_generation, session):
+                    return
+                self._set_busy(True, "正在开始直播...")
+
             self._save_form_config()
             await self._sync_room_before_start_lenient(session, room_id, title, area_id)
             if not self._is_current_action(action_generation, session):
@@ -815,17 +856,20 @@ class LiveControlDialog(QDialog):
                 return
             self._clear_credentials()
             self._set_live_active(False)
-            should_stop_obs = self._obs_streaming_started or self._obs_connected
+            obs_streaming = await self._current_obs_streaming()
+            should_stop_obs, obs_state = obs_cleanup_after_stop_state(obs_streaming)
             obs_stopped = True
             if should_stop_obs:
                 obs_stopped = await self.stop_obs_stream(auto=True)
                 if not self._is_current_action(action_generation, session):
                     return
             self._obs_streaming_started = False
-            if obs_stopped:
-                self.set_status("直播已停止，OBS 推流已停止。" if should_stop_obs else "直播已停止。")
+            if should_stop_obs and obs_stopped:
+                self.set_status("直播已停止，OBS 推流已停止。")
+            elif obs_state == "unknown" or (should_stop_obs and not obs_stopped):
+                self.set_status("直播已停止；OBS 推流未能自动确认/停止，请在 OBS 中手动确认。", error=True)
             else:
-                self.set_status("直播已停止；OBS 推流未能自动停止，请在 OBS 中手动确认。", error=True)
+                self.set_status("直播已停止。")
         except Exception as exc:
             if self._is_current_action(action_generation, session):
                 logger.exception("Failed to stop live")
@@ -836,6 +880,26 @@ class LiveControlDialog(QDialog):
 
     async def _write_obs_after_start(self) -> None:
         await self.start_obs_stream(auto=True)
+
+    async def _confirm_switch_obs_stream(self) -> bool:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[bool] = loop.create_future()
+        box = QMessageBox(self)
+        box.setWindowTitle("OBS 正在推流")
+        box.setText("OBS 当前正在推流。继续开播会停止当前 OBS 推流，并切换到新的 B 站推流地址。")
+        box.setInformativeText("取消将不会开播，也不会修改 OBS。")
+        box.setWindowModality(Qt.WindowModality.WindowModal)
+        continue_btn = box.addButton("继续开播", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+
+        def finish() -> None:
+            if not future.done():
+                future.set_result(box.clickedButton() == continue_btn)
+            box.deleteLater()
+
+        box.finished.connect(lambda _result: finish())
+        box.open()
+        return await future
 
     async def stop_obs_stream(self, auto: bool = False) -> bool:
         client = self._obs_client()
@@ -921,6 +985,13 @@ class LiveControlDialog(QDialog):
         if not auto:
             self.set_status("正在填入 OBS 推流设置并启动推流...")
         try:
+            try:
+                obs_streaming = await client.is_streaming()
+            except ObsApiError as exc:
+                logger.info("Failed to query existing OBS stream before switch: %s", exc)
+            else:
+                if obs_streaming:
+                    await client.stop_stream()
             await client.set_stream_service_settings_and_start(credential)
             self._obs_streaming_started = True
             self.set_status(f"已将 {credential.label.upper()} 填入 OBS 并启动推流。", success=True)

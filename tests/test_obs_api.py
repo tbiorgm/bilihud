@@ -1,5 +1,6 @@
 from bilihud.live_api import StreamCredential
 from bilihud.obs_api import (
+    build_get_stream_status_request,
     build_set_stream_service_request,
     build_start_stream_request,
     build_stop_stream_request,
@@ -7,6 +8,7 @@ from bilihud.obs_api import (
     is_obs_process_name,
     obs_check_button_state,
     obs_start_stream_requests,
+    parse_stream_status_response,
     pick_primary_credential,
 )
 
@@ -54,6 +56,19 @@ def test_build_stop_stream_request_stops_obs_streaming():
         "requestType": "StopStream",
         "requestId": "stop-bilihud-stream",
     }
+
+
+def test_build_get_stream_status_request_reads_obs_output_state():
+    assert build_get_stream_status_request() == {
+        "requestType": "GetStreamStatus",
+        "requestId": "get-bilihud-stream-status",
+    }
+
+
+def test_parse_stream_status_response_reads_active_output():
+    assert parse_stream_status_response({"responseData": {"outputActive": True}}) is True
+    assert parse_stream_status_response({"responseData": {"outputActive": False}}) is False
+    assert parse_stream_status_response({"responseData": {}}) is False
 
 
 def test_is_obs_process_name_matches_common_obs_binary_names():

@@ -3,7 +3,7 @@ import hashlib
 import shutil
 import subprocess
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +99,18 @@ def build_stop_stream_request() -> dict[str, Any]:
     }
 
 
+def build_get_stream_status_request() -> dict[str, Any]:
+    return {
+        "requestType": "GetStreamStatus",
+        "requestId": "get-bilihud-stream-status",
+    }
+
+
+def parse_stream_status_response(response: Mapping[str, Any]) -> bool:
+    data = dict(response.get("responseData") or {})
+    return bool(data.get("outputActive"))
+
+
 def obs_start_stream_requests(credential: StreamCredential) -> list[dict[str, Any]]:
     return [
         build_set_stream_service_request(credential.address, credential.key),
@@ -166,6 +178,18 @@ class ObsWebSocketClient:
                 async with session.ws_connect(self.url, timeout=self.timeout) as ws:
                     await self._identify(ws)
                     await self._send_request(ws, build_stop_stream_request())
+            except TimeoutError as exc:
+                raise ObsApiError("连接 OBS WebSocket 超时。") from exc
+            except aiohttp.ClientError as exc:
+                raise ObsApiError(f"无法连接 OBS WebSocket: {exc}") from exc
+
+    async def is_streaming(self) -> bool:
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.ws_connect(self.url, timeout=self.timeout) as ws:
+                    await self._identify(ws)
+                    response = await self._send_request(ws, build_get_stream_status_request())
+                    return parse_stream_status_response(response)
             except TimeoutError as exc:
                 raise ObsApiError("连接 OBS WebSocket 超时。") from exc
             except aiohttp.ClientError as exc:
