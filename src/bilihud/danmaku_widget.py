@@ -400,9 +400,20 @@ class DanmakuDelegate(QStyledItemDelegate):
             <p><span class="user">{message.username}</span>
             <span class="info"> {action_text}</span></p>
             """
+        if hasattr(message, "uname") and hasattr(message, "msg"):
+            user_color = self.get_user_color(message)
+            return f"""
+            <style>
+                .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
+                .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
+                body, p {{ line-height: 120%; margin: 0; padding: 0; }}
+            </style>
+            <p><span class="user">{html.escape(str(message.uname), quote=True)}</span><span class="colon"> : </span><span class="content">{html.escape(str(message.msg), quote=True)}</span></p>
+            """
         return ""
 
-    def get_user_color(self, danmaku_msg: web_models.DanmakuMessage) -> str:
+    def get_user_color(self, danmaku_msg) -> str:
         """根据用户等级获取用户名颜色"""
         if getattr(danmaku_msg, 'is_system_error', False):
             return "#FF5555"

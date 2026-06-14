@@ -71,3 +71,21 @@ def test_danmaku_widget_emoticon_requests_include_bilibili_headers():
     assert 'request.setRawHeader(b"Referer", b"https://live.bilibili.com/")' in source
     assert "https://live.bilibili.com/" in source
     assert "QNetworkRequest.KnownHeaders.UserAgentHeader" in source
+
+
+def test_danmaku_delegate_renders_local_system_messages():
+    class SystemMessage:
+        uname = " [系统]"
+        msg = "BiliHUD Mirror 已启动: <url>"
+        is_system_info = True
+        is_system_error = False
+        privilege_type = 0
+        vip = False
+        svip = False
+        admin = False
+
+    html = danmaku_widget.DanmakuDelegate().get_html_for_message(SystemMessage())
+
+    assert "BiliHUD Mirror 已启动" in html
+    assert "&lt;url&gt;" in html
+    assert html.strip()
