@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import (
     QCloseEvent, QFont, QColor, QPalette, QIcon, QCursor, 
     QLinearGradient, QBrush, QPainter, QAction, QGuiApplication,
-    QTextDocument
+    QTextDocument, QImage
 )
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 from PyQt6.QtCore import (
