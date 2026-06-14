@@ -3,3 +3,6 @@ export PYBUILD_NAME=bilihud
 
 %:
 	dh $@ --with python3 --buildsystem=pybuild
+
+override_dh_auto_test:
+	@echo "Skipping upstream pytest suite during Debian package build; GitHub test workflow runs it separately."
