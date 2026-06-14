@@ -131,6 +131,24 @@ def test_danmaku_delegate_renders_compact_author_badges():
     assert html.index("小狐 26") < html.index("Locez")
 
 
+def test_danmaku_delegate_renders_reply_target_prefix():
+    message = danmaku_widget.web_models.DanmakuMessage(
+        uname="Locez",
+        msg="test",
+        mode_info={
+            "extra": {
+                "show_reply": True,
+                "reply_uname": "绚下的小恐龙",
+            }
+        },
+    )
+
+    html = danmaku_widget.DanmakuDelegate().get_html_for_message(message)
+
+    assert ".reply { color: #FF79C6;" in html
+    assert '<span class="reply">@绚下的小恐龙&nbsp;</span>test' in html
+
+
 def test_danmaku_delegate_does_not_reuse_document_for_reused_message_id(monkeypatch):
     _app()
 

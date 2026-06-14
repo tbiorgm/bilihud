@@ -90,6 +90,23 @@ def test_danmaku_message_content_html_renders_inline_emoticons_from_extra_emots(
     )
 
 
+def test_danmaku_message_content_html_prepends_reply_target():
+    message = web_models.DanmakuMessage(
+        dm_type=0,
+        msg="test",
+        mode_info={
+            "extra": {
+                "show_reply": True,
+                "reply_uname": "绚下的小恐龙",
+            }
+        },
+    )
+
+    assert danmaku_message_content_html(message) == (
+        '<span class="reply">@绚下的小恐龙&nbsp;</span>test'
+    )
+
+
 def test_danmaku_message_emoticon_urls_include_inline_emots_once():
     message = web_models.DanmakuMessage(
         dm_type=0,

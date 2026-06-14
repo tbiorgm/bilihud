@@ -86,6 +86,23 @@ def danmaku_author_badges(message: web_models.DanmakuMessage) -> list[dict[str, 
     return badges
 
 
+def danmaku_reply_text(message: web_models.DanmakuMessage) -> str:
+    extra = message.extra_dict
+    if extra.get("show_reply") is False:
+        return ""
+    reply_uname = str(extra.get("reply_uname") or "").strip()
+    if not reply_uname:
+        return ""
+    return f"@{reply_uname} "
+
+
+def _danmaku_reply_html(message: web_models.DanmakuMessage) -> str:
+    reply_text = danmaku_reply_text(message).rstrip()
+    if not reply_text:
+        return ""
+    return f'<span class="reply">{html.escape(reply_text, quote=True)}&nbsp;</span>'
+
+
 def _emoticon_option_url(options: dict) -> str:
     url = str(options.get("url") or "").strip()
     if not url.startswith(("http://", "https://")):
@@ -165,10 +182,11 @@ def danmaku_inline_emoticon_content_html(message: web_models.DanmakuMessage) -> 
 
 
 def danmaku_message_content_html(message: web_models.DanmakuMessage) -> str:
+    reply_html = _danmaku_reply_html(message)
     emoticon_url = danmaku_emoticon_url(message)
     if emoticon_url:
-        return _danmaku_emoticon_image_html(message.msg, message.emoticon_options_dict)
-    return danmaku_inline_emoticon_content_html(message)
+        return reply_html + _danmaku_emoticon_image_html(message.msg, message.emoticon_options_dict)
+    return reply_html + danmaku_inline_emoticon_content_html(message)
 
 
 def danmaku_message_emoticon_urls(message: web_models.DanmakuMessage) -> list[str]:

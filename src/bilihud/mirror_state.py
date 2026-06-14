@@ -10,6 +10,7 @@ from .danmaku_format import (
     danmaku_emoticon_scaled_size,
     danmaku_emoticon_url,
     danmaku_inline_emoticons,
+    danmaku_reply_text,
 )
 
 MIRROR_DEFAULT_PORT = 2233
@@ -49,9 +50,15 @@ def _image_segment(text: str, url: str, options: dict[str, Any]) -> dict[str, An
 
 
 def danmaku_segments(message: web_models.DanmakuMessage) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    reply_text = danmaku_reply_text(message)
+    if reply_text:
+        segments.append({"type": "reply", "text": reply_text})
+
     pure_url = danmaku_emoticon_url(message)
     if pure_url:
-        return [_image_segment(message.msg.strip() or "表情", pure_url, message.emoticon_options_dict)]
+        segments.append(_image_segment(message.msg.strip() or "表情", pure_url, message.emoticon_options_dict))
+        return segments
 
     text = message.msg.strip()
     inline = {
@@ -60,10 +67,10 @@ def danmaku_segments(message: web_models.DanmakuMessage) -> list[dict[str, Any]]
         if token in text
     }
     if not inline:
-        return [{"type": "text", "text": text}]
+        segments.append({"type": "text", "text": text})
+        return segments
 
     pattern = re.compile("|".join(re.escape(token) for token in sorted(inline, key=len, reverse=True)))
-    segments: list[dict[str, Any]] = []
     last_end = 0
     for match in pattern.finditer(text):
         if match.start() > last_end:

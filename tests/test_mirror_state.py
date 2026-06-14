@@ -89,6 +89,26 @@ def test_message_to_mirror_entry_converts_inline_emoticons():
     ]
 
 
+def test_message_to_mirror_entry_preserves_reply_target_prefix():
+    message = web_models.DanmakuMessage(
+        uname="Locez",
+        msg="test",
+        mode_info={
+            "extra": {
+                "show_reply": True,
+                "reply_uname": "绚下的小恐龙",
+            }
+        },
+    )
+
+    entry = message_to_mirror_entry(4, message)
+
+    assert entry["segments"] == [
+        {"type": "reply", "text": "@绚下的小恐龙 "},
+        {"type": "text", "text": "test"},
+    ]
+
+
 def test_message_to_mirror_entry_includes_compact_author_badges():
     message = web_models.DanmakuMessage(
         uname="Locez",

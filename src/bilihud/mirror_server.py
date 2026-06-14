@@ -86,6 +86,10 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
       color: white;
       font-size: 17px;
     }}
+    .reply {{
+      color: #FF79C6;
+      font-weight: 800;
+    }}
     .emoticon {{
       vertical-align: middle;
       max-height: 44px;
@@ -164,6 +168,11 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
           img.width = imageSize.width;
           img.height = imageSize.height;
           row.appendChild(img);
+        }} else if (segment.type === "reply") {{
+          const reply = document.createElement("span");
+          reply.className = "reply";
+          reply.textContent = segment.text || "";
+          row.appendChild(reply);
         }} else {{
           appendText(row, segment.text || "");
         }}

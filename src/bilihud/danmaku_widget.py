@@ -594,6 +594,7 @@ class DanmakuDelegate(QStyledItemDelegate):
                 .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
                 .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
                 .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
+                .reply {{ color: #FF79C6; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 700; }}
                 .emoticon {{ vertical-align: middle; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }} 
             </style>
