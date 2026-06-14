@@ -5,6 +5,7 @@ import asyncio
 import qasync
 import ctypes
 import html
+import re
 from ctypes import c_void_p, c_int, c_ulong
 from typing import Optional
 import PyQt6.sip as sip
@@ -44,13 +45,32 @@ DANMAKU_EMOTICON_MAX_HEIGHT = 34
 DANMAKU_EMOTICON_MAX_WIDTH = 140
 
 
-def danmaku_emoticon_url(message: web_models.DanmakuMessage) -> str:
-    if message.dm_type != 1:
-        return ""
-    url = str(message.emoticon_options_dict.get("url") or "").strip()
+def _emoticon_option_url(options: dict) -> str:
+    url = str(options.get("url") or "").strip()
     if not url.startswith(("http://", "https://")):
         return ""
     return url
+
+
+def danmaku_emoticon_url(message: web_models.DanmakuMessage) -> str:
+    if message.dm_type != 1:
+        return ""
+    return _emoticon_option_url(message.emoticon_options_dict)
+
+
+def danmaku_inline_emoticons(message: web_models.DanmakuMessage) -> dict[str, dict]:
+    emots = message.extra_dict.get("emots")
+    if not isinstance(emots, dict):
+        return {}
+
+    inline_emoticons = {}
+    for token, options in emots.items():
+        if not token or not isinstance(options, dict):
+            continue
+        if not _emoticon_option_url(options):
+            continue
+        inline_emoticons[str(token)] = options
+    return inline_emoticons
 
 
 def danmaku_emoticon_scaled_size(options: dict) -> tuple[int, int]:
@@ -73,14 +93,61 @@ def danmaku_emoticon_scaled_size(options: dict) -> tuple[int, int]:
     return width, height
 
 
+def _danmaku_emoticon_image_html(token: str, options: dict) -> str:
+    width, height = danmaku_emoticon_scaled_size(options)
+    alt = html.escape(token.strip() or "表情", quote=True)
+    src = html.escape(_emoticon_option_url(options), quote=True)
+    return f'<img class="emoticon" src="{src}" width="{width}" height="{height}" alt="{alt}" />'
+
+
+def danmaku_inline_emoticon_content_html(message: web_models.DanmakuMessage) -> str:
+    text = message.msg.strip()
+    inline_emoticons = {
+        token: options
+        for token, options in danmaku_inline_emoticons(message).items()
+        if token in text
+    }
+    if not inline_emoticons:
+        return html.escape(text, quote=True)
+
+    tokens = sorted(inline_emoticons, key=len, reverse=True)
+    pattern = re.compile("|".join(re.escape(token) for token in tokens))
+    parts = []
+    last_end = 0
+    for match in pattern.finditer(text):
+        parts.append(html.escape(text[last_end:match.start()], quote=True))
+        token = match.group(0)
+        parts.append(_danmaku_emoticon_image_html(token, inline_emoticons[token]))
+        last_end = match.end()
+    parts.append(html.escape(text[last_end:], quote=True))
+    return "".join(parts)
+
+
 def danmaku_message_content_html(message: web_models.DanmakuMessage) -> str:
     emoticon_url = danmaku_emoticon_url(message)
     if emoticon_url:
-        width, height = danmaku_emoticon_scaled_size(message.emoticon_options_dict)
-        alt = html.escape(message.msg.strip() or "表情", quote=True)
-        src = html.escape(emoticon_url, quote=True)
-        return f'<img class="emoticon" src="{src}" width="{width}" height="{height}" alt="{alt}" />'
-    return html.escape(message.msg.strip(), quote=True)
+        return _danmaku_emoticon_image_html(message.msg, message.emoticon_options_dict)
+    return danmaku_inline_emoticon_content_html(message)
+
+
+def danmaku_message_emoticon_urls(message: web_models.DanmakuMessage) -> list[str]:
+    urls = []
+    seen = set()
+
+    pure_emoticon_url = danmaku_emoticon_url(message)
+    if pure_emoticon_url:
+        urls.append(pure_emoticon_url)
+        seen.add(pure_emoticon_url)
+
+    for token, options in danmaku_inline_emoticons(message).items():
+        if token not in message.msg.strip():
+            continue
+        url = _emoticon_option_url(options)
+        if url and url not in seen:
+            urls.append(url)
+            seen.add(url)
+
+    return urls
 
 
 class ModernInputWidget(QWidget):
@@ -323,21 +390,18 @@ class DanmakuDelegate(QStyledItemDelegate):
         if not isinstance(message, web_models.DanmakuMessage):
             return
 
-        url = danmaku_emoticon_url(message)
-        if not url:
-            return
+        for url in danmaku_message_emoticon_urls(message):
+            qurl = QUrl(url)
+            cached = self._emoticon_cache.get(url)
+            if cached:
+                doc.addResource(QTextDocument.ResourceType.ImageResource, qurl, cached)
+                continue
+            if url not in self._emoticon_cache:
+                self._emoticon_cache[url] = None
+                reply = self._network_manager.get(QNetworkRequest(qurl))
+                reply.finished.connect(lambda reply=reply, url=url: self._on_emoticon_loaded(reply, url))
 
-        qurl = QUrl(url)
-        cached = self._emoticon_cache.get(url)
-        if cached:
-            doc.addResource(QTextDocument.ResourceType.ImageResource, qurl, cached)
-            return
-        if url not in self._emoticon_cache:
-            self._emoticon_cache[url] = None
-            reply = self._network_manager.get(QNetworkRequest(qurl))
-            reply.finished.connect(lambda reply=reply, url=url: self._on_emoticon_loaded(reply, url))
-
-        self._emoticon_docs.setdefault(url, []).append(doc)
+            self._emoticon_docs.setdefault(url, []).append(doc)
 
     def _on_emoticon_loaded(self, reply, url: str) -> None:
         image = QImage.fromData(reply.readAll())

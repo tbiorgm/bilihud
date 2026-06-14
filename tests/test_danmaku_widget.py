@@ -71,3 +71,56 @@ def test_danmaku_message_content_html_renders_emoticon_image_and_escapes_text():
         'width="34" height="34" alt="[&lt;妙啊&gt;&quot;]" />'
     )
     assert danmaku_message_content_html(text) == "&lt;b&gt;普通弹幕&lt;/b&gt;"
+
+
+def test_danmaku_message_content_html_renders_inline_emoticons_from_extra_emots():
+    message = danmaku_widget.web_models.DanmakuMessage(
+        dm_type=0,
+        msg="[汤圆][汤圆] <ok>",
+        mode_info={
+            "extra": {
+                "emots": {
+                    "[汤圆]": {
+                        "url": "https://i0.hdslb.com/bfs/live/tangyuan.png?x=1&y=2",
+                        "width": 60,
+                        "height": 60,
+                    }
+                }
+            }
+        },
+    )
+
+    assert danmaku_message_content_html(message) == (
+        '<img class="emoticon" src="https://i0.hdslb.com/bfs/live/tangyuan.png?x=1&amp;y=2" '
+        'width="34" height="34" alt="[汤圆]" />'
+        '<img class="emoticon" src="https://i0.hdslb.com/bfs/live/tangyuan.png?x=1&amp;y=2" '
+        'width="34" height="34" alt="[汤圆]" />'
+        " &lt;ok&gt;"
+    )
+
+
+def test_danmaku_message_emoticon_urls_include_inline_emots_once():
+    message = danmaku_widget.web_models.DanmakuMessage(
+        dm_type=0,
+        msg="[汤圆][汤圆] [无图]",
+        mode_info={
+            "extra": {
+                "emots": {
+                    "[汤圆]": {
+                        "url": "https://i0.hdslb.com/bfs/live/tangyuan.png",
+                        "width": 60,
+                        "height": 60,
+                    },
+                    "[无图]": {
+                        "url": "",
+                        "width": 60,
+                        "height": 60,
+                    },
+                }
+            }
+        },
+    )
+
+    assert danmaku_widget.danmaku_message_emoticon_urls(message) == [
+        "https://i0.hdslb.com/bfs/live/tangyuan.png"
+    ]
