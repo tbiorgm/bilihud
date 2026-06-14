@@ -1,11 +1,35 @@
 import asyncio
+import hashlib
+import time
 from collections.abc import Callable
+from urllib.parse import urlencode, urlparse
 
 import aiohttp
 import blivedm
 import blivedm.models.web as web_models
 
 from .auth import AuthManager
+from .live_emoticons import (
+    LiveEmoticon,
+    LiveEmoticonPackage,
+    build_live_emoticon_payload,
+    parse_live_emoticon_packages,
+)
+
+WBI_NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
+LIVE_MSG_SEND_URL = "https://api.live.bilibili.com/msg/send"
+LIVE_WEB_LOCATION = "444.8"
+LIVE_EMOTICON_CACHE_TTL_SECONDS = 60.0
+WBI_MIXIN_KEY_ENC_TAB = (
+    46, 47, 18, 2, 53, 8, 23, 32,
+    15, 50, 10, 31, 58, 3, 45, 35,
+    27, 43, 5, 49, 33, 9, 42, 19,
+    29, 28, 14, 39, 12, 38, 41, 13,
+    37, 48, 7, 16, 24, 55, 40, 61,
+    26, 17, 0, 1, 60, 51, 30, 4,
+    22, 25, 54, 21, 56, 59, 6, 63,
+    57, 62, 11, 36, 20, 34, 44, 52,
+)
 
 
 class DanmakuClient:
@@ -23,6 +47,9 @@ class DanmakuClient:
         self.on_gift_received: Callable[[web_models.GiftMessage], None] | None = None
         self.on_interact_received: Callable[[web_models.InteractWordV2Message], None] | None = None
         self.on_login_failed: Callable[[str], None] | None = None # callback(message)
+        self._wbi_mixin_key: str | None = None
+        self._live_emoticon_cache: list[LiveEmoticonPackage] | None = None
+        self._live_emoticon_cache_at = 0.0
 
     def set_danmaku_callback(self, callback: Callable[[web_models.DanmakuMessage], None]):
         """设置弹幕接收回调函数"""
@@ -101,7 +128,7 @@ class DanmakuClient:
             'color': '16777215',
             'mode': '1',
             'fontsize': '25',
-            'rnd': str(int(asyncio.get_event_loop().time())),
+            'rnd': str(int(time.time())),
             'roomid': self.room_id,
             'csrf': csrf_token,
             'csrf_token': csrf_token,
@@ -121,6 +148,104 @@ class DanmakuClient:
         except Exception as e:
             print(f"Send danmaku exception: {e}")
             return False, f"发送异常: {str(e)}"
+
+    async def fetch_live_emoticons(self):
+        """Fetch room-specific live emoticon packages."""
+        if not self.session:
+            raise RuntimeError("弹幕会话未初始化")
+        now = time.time()
+        if (
+            self._live_emoticon_cache is not None
+            and now - self._live_emoticon_cache_at < LIVE_EMOTICON_CACHE_TTL_SECONDS
+        ):
+            return self._live_emoticon_cache
+
+        url = "https://api.live.bilibili.com/xlive/web-ucenter/v2/emoticon/GetEmoticons"
+        params = {"platform": "pc", "room_id": self.room_id}
+        headers = {"Referer": f"https://live.bilibili.com/{self.room_id}"}
+        async with self.session.get(url, params=params, headers=headers) as res:
+            if res.status != 200:
+                raise RuntimeError(f"HTTP错误: {res.status}")
+            payload = await res.json(content_type=None)
+        packages = parse_live_emoticon_packages(payload)
+        self._live_emoticon_cache = packages
+        self._live_emoticon_cache_at = now
+        return packages
+
+    async def send_live_emoticon(self, emoticon: LiveEmoticon) -> tuple[bool, str]:
+        """Send a pure live emoticon."""
+        if not self.session:
+            return False, "会话未初始化"
+        if not emoticon.is_available:
+            label = emoticon.unlock_label or "当前账号"
+            return False, f"表情未解锁: {label}"
+
+        csrf_token = ""
+        for cookie in self.session.cookie_jar:
+            if cookie.key == "bili_jct":
+                csrf_token = cookie.value
+                break
+        if not csrf_token:
+            return False, "未找到CSRF Token，请重新连接或检查Cookie"
+
+        if _is_text_escape_emoticon(emoticon):
+            return await self.send_danmaku(_text_escape_message(emoticon.emoji))
+
+        data = build_live_emoticon_payload(
+            room_id=self.room_id,
+            csrf_token=csrf_token,
+            rnd=str(int(time.time())),
+            emoticon=emoticon,
+        )
+
+        try:
+            send_url = await self._signed_live_msg_send_url()
+            async with self.session.post(send_url, data=_multipart_form_data(data)) as res:
+                if res.status != 200:
+                    return False, f"HTTP错误: {res.status}"
+                json_data = await res.json()
+                if json_data["code"] == 0:
+                    return True, "发送成功"
+                code = json_data.get("code")
+                message = json_data.get("message") or json_data.get("msg") or "未知错误"
+                return False, f"发送失败: {message} (code={code})"
+        except Exception as e:
+            return False, f"发送异常: {str(e)}"
+
+    async def _signed_live_msg_send_url(self) -> str:
+        mixin_key = await self._get_wbi_mixin_key()
+        wts = str(int(time.time()))
+        signed_params = _sign_wbi_params({"web_location": LIVE_WEB_LOCATION}, mixin_key, wts)
+        query = urlencode(
+            {
+                "web_location": signed_params["web_location"],
+                "w_rid": signed_params["w_rid"],
+                "wts": signed_params["wts"],
+            }
+        )
+        return f"{LIVE_MSG_SEND_URL}?{query}"
+
+    async def _get_wbi_mixin_key(self) -> str:
+        if self._wbi_mixin_key:
+            return self._wbi_mixin_key
+        if not self.session:
+            raise RuntimeError("弹幕会话未初始化")
+
+        async with self.session.get(WBI_NAV_URL) as res:
+            if res.status != 200:
+                raise RuntimeError(f"WBI key HTTP错误: {res.status}")
+            payload = await res.json(content_type=None)
+
+        if payload.get("code") != 0:
+            message = payload.get("message") or payload.get("msg") or "获取WBI key失败"
+            raise RuntimeError(str(message))
+
+        wbi_img = (payload.get("data") or {}).get("wbi_img") or {}
+        mixin_key = _build_wbi_mixin_key(str(wbi_img.get("img_url") or ""), str(wbi_img.get("sub_url") or ""))
+        if not mixin_key:
+            raise RuntimeError("获取WBI key失败")
+        self._wbi_mixin_key = mixin_key
+        return mixin_key
 
     async def stop(self, normal_timeout: float = 3.0, forced_timeout: float = 3.0):
         """停止弹幕客户端，并确认底层网络任务和会话都已关闭。"""
@@ -170,6 +295,48 @@ class DanmakuClient:
 
 class DanmakuShutdownError(RuntimeError):
     pass
+
+
+def _wbi_key_from_url(url: str) -> str:
+    filename = urlparse(url).path.rsplit("/", 1)[-1]
+    return filename.split(".", 1)[0]
+
+
+def _build_wbi_mixin_key(img_url: str, sub_url: str) -> str:
+    raw_key = _wbi_key_from_url(img_url) + _wbi_key_from_url(sub_url)
+    if len(raw_key) < max(WBI_MIXIN_KEY_ENC_TAB) + 1:
+        return ""
+    return "".join(raw_key[index] for index in WBI_MIXIN_KEY_ENC_TAB)[:32]
+
+
+def _sign_wbi_params(params: dict[str, str], mixin_key: str, wts: str) -> dict[str, str]:
+    signed_params = {key: str(value) for key, value in params.items()}
+    signed_params["wts"] = wts
+    safe_params = {
+        key: "".join(ch for ch in value if ch not in "!'()*")
+        for key, value in signed_params.items()
+    }
+    query = urlencode(sorted(safe_params.items()))
+    signed_params["w_rid"] = hashlib.md5(f"{query}{mixin_key}".encode()).hexdigest()
+    return signed_params
+
+
+def _multipart_form_data(data: dict[str, str | int]) -> aiohttp.FormData:
+    form_data = aiohttp.FormData(default_to_multipart=True)
+    for key, value in data.items():
+        form_data.add_field(key, str(value))
+    return form_data
+
+
+def _is_text_escape_emoticon(emoticon: LiveEmoticon) -> bool:
+    return emoticon.package_name.strip().casefold() == "emoji"
+
+
+def _text_escape_message(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        return stripped
+    return f"[{stripped}]"
 
 
 class DanmakuHandler(blivedm.BaseHandler):

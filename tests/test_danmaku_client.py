@@ -1,9 +1,12 @@
 import asyncio
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
+import aiohttp
 import pytest
 
 from bilihud.danmaku_client import DanmakuClient, DanmakuShutdownError
+from bilihud.live_emoticons import LiveEmoticon
 
 
 def test_stop_catches_asyncio_timeout_error_for_python_310_compatibility():
@@ -24,6 +27,54 @@ class FakeSession:
         self.closed = True
         if self._on_close is not None:
             self._on_close()
+
+
+class FakeResponse:
+    def __init__(self, payload, status=200):
+        self.payload = payload
+        self.status = status
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self, content_type=None):
+        return self.payload
+
+
+class FakeCookie:
+    def __init__(self, key, value):
+        self.key = key
+        self.value = value
+
+
+class FakeHttpSession:
+    def __init__(self, get_payload=None, post_payload=None):
+        self.get_payload = get_payload or {"code": 0, "data": {"data": []}}
+        self.post_payload = post_payload or {"code": 0, "message": "0"}
+        self.posted_data = None
+        self.get_params = None
+        self.get_headers = None
+        self.get_calls = []
+        self.cookie_jar = [FakeCookie("bili_jct", "csrf-token")]
+
+    def get(self, url, params=None, headers=None):
+        self.get_url = url
+        self.get_params = params
+        self.get_headers = headers
+        self.get_calls.append((url, params, headers))
+        return FakeResponse(self.get_payload)
+
+    def post(self, url, data=None):
+        self.post_url = url
+        self.posted_data = data
+        return FakeResponse(self.post_payload)
+
+
+def _form_data_fields(form_data):
+    return {disposition["name"]: value for disposition, _, value in form_data._fields}
 
 
 class FakeBLiveClient:
@@ -132,5 +183,281 @@ def test_stop_raises_if_blivedm_task_survives_forced_session_close():
         assert fake_session.closed is True
         assert fake_blive.close_calls == 1
         assert fake_blive.is_running is True
+
+    asyncio.run(run_test())
+
+
+def test_fetch_live_emoticons_uses_v2_api_and_existing_session():
+    async def run_test():
+        client = DanmakuClient(870691)
+        client.session = FakeHttpSession(
+            get_payload={
+                "code": 0,
+                "message": "0",
+                "data": {
+                    "data": [
+                        {
+                            "pkg_id": 100428,
+                            "pkg_name": "房间专属表情",
+                            "pkg_type": 2,
+                            "pkg_perm": 1,
+                            "emoticons": [
+                                {
+                                    "emoji": "AKIE的A",
+                                    "url": "http://i0.hdslb.com/bfs/live/room.png",
+                                    "width": 162,
+                                    "height": 162,
+                                    "perm": 1,
+                                    "emoticon_unique": "room_870691_84455",
+                                    "emoticon_id": 0,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        )
+
+        packages = await client.fetch_live_emoticons()
+
+        assert packages[0].name == "房间专属表情"
+        assert client.session.get_url.endswith("/xlive/web-ucenter/v2/emoticon/GetEmoticons")
+        assert client.session.get_params == {"platform": "pc", "room_id": 870691}
+        assert client.session.get_headers["Referer"] == "https://live.bilibili.com/870691"
+
+    asyncio.run(run_test())
+
+
+def test_fetch_live_emoticons_uses_one_minute_cache(monkeypatch):
+    now = 1000.0
+
+    def current_time():
+        return now
+
+    async def run_test():
+        nonlocal now
+        client = DanmakuClient(870691)
+        client.session = FakeHttpSession(
+            get_payload={
+                "code": 0,
+                "message": "0",
+                "data": {
+                    "data": [
+                        {
+                            "pkg_id": 100428,
+                            "pkg_name": "房间专属表情",
+                            "pkg_type": 2,
+                            "pkg_perm": 1,
+                            "emoticons": [
+                                {
+                                    "emoji": "AKIE的A",
+                                    "url": "http://i0.hdslb.com/bfs/live/room.png",
+                                    "width": 162,
+                                    "height": 162,
+                                    "perm": 1,
+                                    "emoticon_unique": "room_870691_84455",
+                                    "emoticon_id": 0,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        )
+
+        first = await client.fetch_live_emoticons()
+        second = await client.fetch_live_emoticons()
+        now = 1061.0
+        third = await client.fetch_live_emoticons()
+
+        assert first is second
+        assert third is not first
+        assert len(client.session.get_calls) == 2
+
+    monkeypatch.setattr("bilihud.danmaku_client.time.time", current_time)
+    asyncio.run(run_test())
+
+
+def test_fetch_live_emoticons_does_not_cache_failed_fetch(monkeypatch):
+    now = 1000.0
+
+    async def run_test():
+        client = DanmakuClient(870691)
+        client.session = FakeHttpSession(get_payload={"code": -101, "message": "账号未登录", "data": None})
+
+        with pytest.raises(ValueError, match="账号未登录"):
+            await client.fetch_live_emoticons()
+
+        client.session.get_payload = {"code": 0, "message": "0", "data": {"data": []}}
+        packages = await client.fetch_live_emoticons()
+
+        assert packages == []
+        assert len(client.session.get_calls) == 2
+
+    monkeypatch.setattr("bilihud.danmaku_client.time.time", lambda: now)
+    asyncio.run(run_test())
+
+
+def test_send_live_emoticon_posts_dm_type_payload():
+    async def run_test():
+        client = DanmakuClient(870691)
+        client.session = FakeHttpSession(
+            get_payload={
+                "code": 0,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png",
+                    }
+                },
+            },
+            post_payload={"code": 0, "message": "0"},
+        )
+        emoticon = LiveEmoticon(
+            emoji="AKIE的A",
+            url="http://i0.hdslb.com/bfs/live/room.png",
+            width=162,
+            height=162,
+            perm=1,
+            unique="room_870691_84455",
+            emoticon_id=0,
+            package_type=2,
+        )
+
+        success, message = await client.send_live_emoticon(emoticon)
+
+        assert success is True
+        assert message == "发送成功"
+        assert client.session.post_url.startswith("https://api.live.bilibili.com/msg/send?")
+        query = parse_qs(urlparse(client.session.post_url).query)
+        assert query["web_location"] == ["444.8"]
+        assert query["wts"]
+        assert len(query["w_rid"][0]) == 32
+        assert client.session.get_calls[0][0] == "https://api.bilibili.com/x/web-interface/nav"
+        assert isinstance(client.session.posted_data, aiohttp.FormData)
+        assert client.session.posted_data.is_multipart is True
+        posted_fields = _form_data_fields(client.session.posted_data)
+        assert posted_fields["dm_type"] == "1"
+        assert posted_fields["emoticonOptions"] == "[object Object]"
+        assert posted_fields["data_extend"] == '{"trackid":"-99998"}'
+        assert "emoticon_unique" not in posted_fields
+        assert posted_fields["msg"] == "room_870691_84455"
+
+    asyncio.run(run_test())
+
+
+def test_send_live_emoticon_posts_dm_type_payload_for_official_common_package():
+    async def run_test():
+        client = DanmakuClient(870691)
+        client.session = FakeHttpSession(
+            get_payload={
+                "code": 0,
+                "data": {
+                    "wbi_img": {
+                        "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+                        "sub_url": "https://i0.hdslb.com/bfs/wbi/fedcba9876543210fedcba9876543210.png",
+                    }
+                },
+            },
+            post_payload={"code": 0, "message": "0"},
+        )
+        emoticon = LiveEmoticon(
+            emoji="啊",
+            url="http://i0.hdslb.com/bfs/live/a.png",
+            width=200,
+            height=60,
+            perm=1,
+            unique="official_331",
+            emoticon_id=331,
+            package_type=1,
+        )
+
+        success, message = await client.send_live_emoticon(emoticon)
+
+        assert success is True
+        assert message == "发送成功"
+        assert isinstance(client.session.posted_data, aiohttp.FormData)
+        assert client.session.posted_data.is_multipart is True
+        posted_fields = _form_data_fields(client.session.posted_data)
+        assert posted_fields["msg"] == "official_331"
+        assert posted_fields["dm_type"] == "1"
+        assert posted_fields["emoticonOptions"] == "[object Object]"
+        assert "emoticon_unique" not in posted_fields
+
+    asyncio.run(run_test())
+
+
+def test_send_live_emoticon_sends_emoji_package_as_text_escape():
+    async def run_test():
+        client = DanmakuClient(870691)
+        client.session = FakeHttpSession(post_payload={"code": 0, "message": "0"})
+        emoticon = LiveEmoticon(
+            emoji="赞",
+            url="http://i0.hdslb.com/bfs/live/thumb.png",
+            width=64,
+            height=64,
+            perm=1,
+            unique="emoji_like",
+            emoticon_id=0,
+            package_name="emoji",
+        )
+
+        success, message = await client.send_live_emoticon(emoticon)
+
+        assert success is True
+        assert message == "发送成功"
+        assert client.session.post_url == "https://api.live.bilibili.com/msg/send"
+        assert client.session.get_calls == []
+        assert client.session.posted_data["msg"] == "[赞]"
+        assert "dm_type" not in client.session.posted_data
+
+    asyncio.run(run_test())
+
+
+def test_send_live_emoticon_preserves_bracketed_emoji_text_escape():
+    async def run_test():
+        client = DanmakuClient(870691)
+        client.session = FakeHttpSession(post_payload={"code": 0, "message": "0"})
+        emoticon = LiveEmoticon(
+            emoji="[dog]",
+            url="http://i0.hdslb.com/bfs/live/dog.png",
+            width=64,
+            height=64,
+            perm=1,
+            unique="emoji_dog",
+            emoticon_id=0,
+            package_name="emoji",
+        )
+
+        success, message = await client.send_live_emoticon(emoticon)
+
+        assert success is True
+        assert message == "发送成功"
+        assert client.session.posted_data["msg"] == "[dog]"
+        assert "dm_type" not in client.session.posted_data
+
+    asyncio.run(run_test())
+
+
+def test_send_live_emoticon_rejects_locked_emoticon_without_posting():
+    async def run_test():
+        client = DanmakuClient(870691)
+        client.session = FakeHttpSession()
+        emoticon = LiveEmoticon(
+            emoji="疑惑",
+            url="http://i0.hdslb.com/bfs/live/locked.png",
+            width=162,
+            height=162,
+            perm=0,
+            unique="room_870691_1154",
+            emoticon_id=1154,
+            unlock_label="舰长",
+        )
+
+        success, message = await client.send_live_emoticon(emoticon)
+
+        assert success is False
+        assert "未解锁" in message
+        assert client.session.posted_data is None
 
     asyncio.run(run_test())

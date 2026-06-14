@@ -13,12 +13,13 @@ from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QLineEdit, QPushButton, QFrame,
     QGraphicsDropShadowEffect, QSystemTrayIcon, QMenu,
-    QDialog, QSizePolicy, QAbstractItemView, QListView
+    QDialog, QSizePolicy, QAbstractItemView, QListView, QScrollArea,
+    QGridLayout, QToolButton, QTabWidget
 )
 from PyQt6.QtGui import (
     QCloseEvent, QFont, QColor, QPalette, QIcon, QCursor, 
     QLinearGradient, QBrush, QPainter, QAction, QGuiApplication,
-    QTextDocument, QImage
+    QTextDocument, QImage, QPixmap
 )
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 from PyQt6.QtCore import (
@@ -32,6 +33,7 @@ from .danmaku_format import (
     danmaku_message_content_html,
     danmaku_message_emoticon_urls,
 )
+from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
 from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorState
 from .mirror_server import MirrorServer
 from .mirror_settings_dialog import MirrorSettingsDialog
@@ -52,8 +54,9 @@ class ModernInputWidget(QWidget):
     一个现代化的输入框组件，包含圆形输入框和发送按钮
     """
     send_requested = pyqtSignal(str)
+    emoticon_requested = pyqtSignal()
 
-    def __init__(self, parent=None, placeholder="发送弹幕..."):
+    def __init__(self, parent=None, placeholder="发送弹幕...", show_emoticon_button: bool = True):
         super().__init__(parent)
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -79,6 +82,29 @@ class ModernInputWidget(QWidget):
             }
         """)
         self.input_edit.returnPressed.connect(self.on_send)
+
+        self.emoticon_btn = QPushButton("☻")
+        self.emoticon_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.emoticon_btn.setFixedSize(28, 26)
+        self.emoticon_btn.setToolTip("发送表情")
+        self.emoticon_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 35);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 60);
+                border-radius: 13px;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 60);
+            }
+            QPushButton:pressed {
+                background-color: rgba(255, 255, 255, 80);
+            }
+        """)
+        self.emoticon_btn.clicked.connect(self.emoticon_requested.emit)
+        self.emoticon_btn.setVisible(show_emoticon_button)
         
         # 发送按钮
         self.send_btn = QPushButton("发送")
@@ -104,6 +130,7 @@ class ModernInputWidget(QWidget):
         self.send_btn.clicked.connect(self.on_send)
 
         self.layout.addWidget(self.input_edit)
+        self.layout.addWidget(self.emoticon_btn)
         self.layout.addWidget(self.send_btn)
 
     def on_send(self):
@@ -114,6 +141,175 @@ class ModernInputWidget(QWidget):
 
     def setFocus(self):
         self.input_edit.setFocus()
+
+
+class EmoticonPickerPopup(QDialog):
+    """直播间表情选择弹窗。"""
+    emoticon_selected = pyqtSignal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.resize(330, 260)
+        self._network_manager = QNetworkAccessManager(self)
+        self._image_cache: dict[str, QPixmap] = {}
+        self._button_by_url: dict[str, list[QToolButton]] = {}
+        self._emoticon_buttons: list[QToolButton] = []
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 6, 6, 6)
+        self.container = QFrame(self)
+        self.container.setStyleSheet("""
+            QFrame {
+                background-color: rgba(22, 24, 28, 235);
+                border: 1px solid rgba(255, 255, 255, 40);
+                border-radius: 8px;
+            }
+            QTabWidget::pane {
+                border: none;
+            }
+            QTabBar::tab {
+                background: rgba(255, 255, 255, 24);
+                color: white;
+                padding: 5px 9px;
+                margin-right: 4px;
+                border-radius: 5px;
+                font-size: 11px;
+            }
+            QTabBar::tab:selected {
+                background: rgba(79, 172, 254, 150);
+            }
+            QToolButton {
+                background: rgba(255, 255, 255, 18);
+                border: 1px solid rgba(255, 255, 255, 22);
+                border-radius: 6px;
+                color: white;
+                padding: 2px;
+            }
+            QToolButton:hover {
+                background: rgba(255, 255, 255, 40);
+            }
+            QToolButton:disabled {
+                background: rgba(255, 255, 255, 10);
+                color: rgba(255, 255, 255, 110);
+            }
+        """)
+        outer.addWidget(self.container)
+        layout = QVBoxLayout(self.container)
+        layout.setContentsMargins(8, 8, 8, 8)
+        self.tabs = QTabWidget(self.container)
+        layout.addWidget(self.tabs)
+
+    def set_loading(self):
+        self._clear_tabs()
+        label = QLabel("加载中...", self)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("color: rgba(255, 255, 255, 180);")
+        self.tabs.addTab(label, "表情")
+
+    def set_error(self, message: str):
+        self._clear_tabs()
+        label = QLabel(message, self)
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("color: rgba(255, 255, 255, 180);")
+        self.tabs.addTab(label, "表情")
+
+    def set_packages(self, packages: list[LiveEmoticonPackage]):
+        self._clear_tabs()
+        if not packages:
+            self.set_error("没有可显示的直播间表情")
+            return
+
+        for package in packages:
+            page = QWidget(self)
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(0, 4, 0, 0)
+            scroll = QScrollArea(page)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            grid_host = QWidget(scroll)
+            grid = QGridLayout(grid_host)
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setSpacing(6)
+
+            for index, emoticon in enumerate(package.emoticons):
+                button = self._create_emoticon_button(emoticon)
+                row, col = divmod(index, 5)
+                grid.addWidget(button, row, col)
+                self._emoticon_buttons.append(button)
+
+            scroll.setWidget(grid_host)
+            page_layout.addWidget(scroll)
+            self.tabs.addTab(page, package.name)
+
+    def _clear_tabs(self):
+        self._emoticon_buttons.clear()
+        self._button_by_url.clear()
+        while self.tabs.count():
+            page = self.tabs.widget(0)
+            self.tabs.removeTab(0)
+            if page is not None:
+                page.deleteLater()
+
+    def _create_emoticon_button(self, emoticon: LiveEmoticon) -> QToolButton:
+        button = QToolButton(self)
+        button.setFixedSize(52, 52)
+        button.setIconSize(QSize(42, 42))
+        label = emoticon.unlock_label
+        button.setToolTip(emoticon.emoji if not label else f"{emoticon.emoji} - {label}")
+        if not emoticon.is_available:
+            button.setEnabled(False)
+            if label:
+                button.setText(label)
+                button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+                color = emoticon.unlock_color if emoticon.unlock_color.startswith("#") else "rgba(255, 255, 255, 140)"
+                button.setStyleSheet(
+                    f"""
+                    QToolButton:disabled {{
+                        background: rgba(255, 255, 255, 10);
+                        color: {color};
+                    }}
+                    """
+                )
+        else:
+            button.clicked.connect(lambda _checked=False, emoticon=emoticon: self._select_emoticon(emoticon))
+
+        self._load_icon(button, emoticon.url)
+        return button
+
+    def _select_emoticon(self, emoticon: LiveEmoticon):
+        self.emoticon_selected.emit(emoticon)
+        self.hide()
+
+    def _load_icon(self, button: QToolButton, url: str):
+        cached = self._image_cache.get(url)
+        if cached:
+            button.setIcon(QIcon(cached))
+            return
+
+        self._button_by_url.setdefault(url, []).append(button)
+        if len(self._button_by_url[url]) > 1:
+            return
+
+        request = QNetworkRequest(QUrl(url))
+        request.setRawHeader(b"Referer", b"https://live.bilibili.com/")
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 BiliHUD")
+        reply = self._network_manager.get(request)
+        reply.finished.connect(lambda reply=reply, url=url: self._on_icon_loaded(reply, url))
+
+    def _on_icon_loaded(self, reply, url: str):
+        pixmap = QPixmap()
+        pixmap.loadFromData(reply.readAll())
+        reply.deleteLater()
+        buttons = self._button_by_url.pop(url, [])
+        if pixmap.isNull():
+            return
+        self._image_cache[url] = pixmap
+        icon = QIcon(pixmap)
+        for button in buttons:
+            button.setIcon(icon)
 
 
 class DanmakuInputDialog(QDialog):
@@ -152,7 +348,7 @@ class DanmakuInputDialog(QDialog):
         container_layout = QHBoxLayout(self.container)
         container_layout.setContentsMargins(10, 8, 10, 8)
         
-        self.input_widget = ModernInputWidget(self, placeholder="输入弹幕... [ESC关闭]")
+        self.input_widget = ModernInputWidget(self, placeholder="输入弹幕... [ESC关闭]", show_emoticon_button=False)
         self.input_widget.send_requested.connect(self.on_send)
         
         container_layout.addWidget(self.input_widget)
@@ -246,7 +442,7 @@ class DanmakuDelegate(QStyledItemDelegate):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._cache = {} # Map[id(message), QTextDocument]
+        self._cache = {} # Map[id(message), (message, QTextDocument)]
         self._emoticon_cache: dict[str, QImage | None] = {}
         self._emoticon_docs: dict[str, list[QTextDocument]] = {}
         self._network_manager = QNetworkAccessManager(self)
@@ -255,15 +451,17 @@ class DanmakuDelegate(QStyledItemDelegate):
     def _get_document(self, message, width, font):
         """Retrieve or create cached document."""
         msg_id = id(message)
-        
-        if msg_id in self._cache:
-             doc = self._cache[msg_id]
-             # Update width if changed (Resize event)
-             if doc.textWidth() != width:
-                 doc.setTextWidth(width)
-             # Update font if changed? Usually constant.
-             return doc
-             
+
+        cached = self._cache.get(msg_id)
+        if cached is not None:
+            cached_message, doc = cached
+            if cached_message is message:
+                # Update width if changed (Resize event)
+                if doc.textWidth() != width:
+                    doc.setTextWidth(width)
+                # Update font if changed? Usually constant.
+                return doc
+
         # Cache Miss - Create new
         html_content = self.get_html_for_message(message)
         doc = QTextDocument()
@@ -272,16 +470,17 @@ class DanmakuDelegate(QStyledItemDelegate):
         doc.setHtml(html_content)
         doc.setTextWidth(width)
         self._attach_emoticon_resource(doc, message)
-        
-        self._cache[msg_id] = doc
-        
-        # [Cache Pruning]
-        # Simple mechanism: keep size reasonable (e.g. 200 items max in list -> 200 docs)
-        # If list grows to 1000, we might want to prune. 
-        # But QListWidget already prunes to 200 via logic in add_message.
-        # So we just assume cache size ~= list size.
-        
+
+        self._cache[msg_id] = (message, doc)
+
+        # Pruned from DanmakuWidget.add_message when QListWidget drops old items.
         return doc
+
+    def forget_message(self, message) -> None:
+        msg_id = id(message)
+        cached = self._cache.get(msg_id)
+        if cached is not None and cached[0] is message:
+            self._cache.pop(msg_id, None)
 
     def _attach_emoticon_resource(self, doc: QTextDocument, message) -> None:
         if not isinstance(message, web_models.DanmakuMessage):
@@ -802,6 +1001,9 @@ class DanmakuWidget(QWidget):
         # --- 底部输入区域 (新) ---
         self.input_area = ModernInputWidget(self)
         self.input_area.send_requested.connect(self.trigger_send)
+        self.input_area.emoticon_requested.connect(self.open_emoticon_picker)
+        self.emoticon_picker = EmoticonPickerPopup(self)
+        self.emoticon_picker.emoticon_selected.connect(self.trigger_send_live_emoticon)
 
         # 组装 Main
         self.main_layout.addWidget(self.header_widget)
@@ -963,6 +1165,37 @@ class DanmakuWidget(QWidget):
         """处理发送弹幕请求"""
         if not text: return
         asyncio.create_task(self._send_danmaku_task(text))
+
+    @qasync.asyncSlot()
+    async def open_emoticon_picker(self):
+        if not self.danmaku_client or not self.danmaku_client.session:
+            self.add_system_message("未连接直播间，无法加载表情", "error")
+            return
+
+        self.emoticon_picker.set_loading()
+        button_pos = self.input_area.emoticon_btn.mapToGlobal(QPoint(0, 0))
+        self.emoticon_picker.move(
+            button_pos.x() - self.emoticon_picker.width() + self.input_area.emoticon_btn.width(),
+            button_pos.y() - self.emoticon_picker.height() - 8,
+        )
+        self.emoticon_picker.show()
+        try:
+            packages = await self.danmaku_client.fetch_live_emoticons()
+        except Exception as e:
+            self.emoticon_picker.set_error(str(e))
+            return
+        self.emoticon_picker.set_packages(packages)
+
+    def trigger_send_live_emoticon(self, emoticon: LiveEmoticon):
+        asyncio.create_task(self._send_live_emoticon_task(emoticon))
+
+    async def _send_live_emoticon_task(self, emoticon: LiveEmoticon):
+        if not self.danmaku_client:
+            self.add_system_message("未连接直播间，无法发送", "error")
+            return
+        success, msg = await self.danmaku_client.send_live_emoticon(emoticon)
+        if not success:
+            self.add_system_message(f"发送失败: {msg}", "error")
 
     def open_input_dialog(self):
         """打开全局输入框"""
@@ -1355,13 +1588,18 @@ class DanmakuWidget(QWidget):
         # Just create an item and set data. Paint/Layout is handled by DanmakuDelegate.
         item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, message)
-        
+
         self.danmaku_list.addItem(item)
-        self.danmaku_list.scrollToBottom()
 
         # [Optimization] Reduce max history to 200 to prevent render lag
         if self.danmaku_list.count() > 200:
-            self.danmaku_list.takeItem(0)
+            removed_item = self.danmaku_list.takeItem(0)
+            if removed_item is not None:
+                delegate = self.danmaku_list.itemDelegate()
+                if hasattr(delegate, "forget_message"):
+                    delegate.forget_message(removed_item.data(Qt.ItemDataRole.UserRole))
+
+        self.danmaku_list.scrollToBottom()
 
         entry = self.mirror_state.add_message(message)
         if self.mirror_server is not None:
