@@ -703,9 +703,10 @@ git commit -m "feat: add bilihud mirror state"
 Create `tests/test_mirror_server.py`:
 
 ```python
+import inspect
 import json
 
-from bilihud.mirror_server import mirror_event_payload, mirror_html
+from bilihud.mirror_server import MirrorServer, mirror_event_payload, mirror_html
 from bilihud.mirror_state import MIRROR_EVENTS_ROUTE, MIRROR_ROUTE
 
 
@@ -733,6 +734,12 @@ def test_mirror_event_payload_serializes_named_event():
     assert payload.endswith("\n\n")
     data_line = next(line for line in payload.splitlines() if line.startswith("data: "))
     assert json.loads(data_line.removeprefix("data: ")) == {"seq": 1, "segments": []}
+
+
+def test_mirror_server_registers_sse_client_before_snapshot_write():
+    source = inspect.getsource(MirrorServer._handle_events)
+
+    assert source.index("self._clients.add(queue)") < source.index('mirror_event_payload("snapshot"')
 ```
 
 - [ ] **Step 2: Run tests and verify they fail**
@@ -915,10 +922,10 @@ class MirrorServer:
             },
         )
         await response.prepare(_request)
-        await response.write(mirror_event_payload("snapshot", self.state.snapshot()).encode("utf-8"))
-
         queue: asyncio.Queue[str] = asyncio.Queue()
         self._clients.add(queue)
+        await response.write(mirror_event_payload("snapshot", self.state.snapshot()).encode("utf-8"))
+
         try:
             while True:
                 payload = await queue.get()
