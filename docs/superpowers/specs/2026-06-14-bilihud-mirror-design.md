@@ -11,6 +11,7 @@ The first consumer is expected to be an OBS Browser Source, but the feature shou
 Expose a local browser-rendered mirror of BiliHUD's danmaku content:
 
 - URL: `http://127.0.0.1:<port>/bilihud-mirror`
+- Default port: `2233`.
 - Sync local HUD danmaku content and visual style semantics.
 - Let external tools place, scale, crop, and capture the mirror page themselves.
 - Keep mirror naming and core implementation free of OBS-specific semantics.
@@ -60,6 +61,12 @@ Default URL shape:
 
 ```text
 http://127.0.0.1:<port>/bilihud-mirror
+```
+
+The default concrete URL is:
+
+```text
+http://127.0.0.1:2233/bilihud-mirror
 ```
 
 Suggested endpoints:
@@ -129,6 +136,12 @@ If a later UI action creates or updates an OBS Browser Source, it should point t
 http://127.0.0.1:<port>/bilihud-mirror
 ```
 
+With the default port:
+
+```text
+http://127.0.0.1:2233/bilihud-mirror
+```
+
 Names in OBS can use `BiliHUD Mirror`, but the mirror server and page should not use OBS-specific route names such as `/obs-mirror` or `/obs-danmaku`.
 
 Failure to connect to OBS must not disable the mirror page. The user can still add the URL manually.
@@ -138,7 +151,7 @@ Failure to connect to OBS must not disable the mirror page. The user can still a
 Suggested config keys:
 
 - `mirror_enabled`: boolean.
-- `mirror_port`: integer, default selected by BiliHUD.
+- `mirror_port`: integer, default `2233`.
 
 The server should bind only to `127.0.0.1` by default. Exposing the mirror to LAN is out of scope for the first version because danmaku content and user names are being re-served from the local machine.
 
@@ -147,7 +160,7 @@ If the configured port is unavailable, BiliHUD should either:
 - choose another available loopback port and show the active URL; or
 - fail clearly and keep the local HUD usable.
 
-The first implementation can prefer a deterministic default port if available, with clear fallback messaging.
+The first implementation should prefer `2233` if available, with clear fallback messaging if it is occupied.
 
 ## Data Flow
 
