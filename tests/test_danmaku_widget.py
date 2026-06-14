@@ -36,3 +36,11 @@ def test_danmaku_widget_exposes_bilihud_mirror_tray_action():
     assert "MIRROR_ROUTE" in source
     assert "obs-mirror" not in source
     assert "obs-danmaku" not in source
+
+
+def test_danmaku_widget_emoticon_requests_include_bilibili_headers():
+    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+
+    assert 'request.setRawHeader(b"Referer", b"https://live.bilibili.com/")' in source
+    assert "https://live.bilibili.com/" in source
+    assert "QNetworkRequest.KnownHeaders.UserAgentHeader" in source

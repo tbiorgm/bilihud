@@ -294,7 +294,10 @@ class DanmakuDelegate(QStyledItemDelegate):
                 continue
             if url not in self._emoticon_cache:
                 self._emoticon_cache[url] = None
-                reply = self._network_manager.get(QNetworkRequest(qurl))
+                request = QNetworkRequest(qurl)
+                request.setRawHeader(b"Referer", b"https://live.bilibili.com/")
+                request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "Mozilla/5.0 BiliHUD")
+                reply = self._network_manager.get(request)
                 reply.finished.connect(lambda reply=reply, url=url: self._on_emoticon_loaded(reply, url))
 
             self._emoticon_docs.setdefault(url, []).append(doc)

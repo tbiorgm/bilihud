@@ -14,6 +14,7 @@ from .danmaku_format import (
 MIRROR_DEFAULT_PORT = 2233
 MIRROR_ROUTE = "/bilihud-mirror"
 MIRROR_EVENTS_ROUTE = "/bilihud-mirror/events"
+MIRROR_IMAGE_ROUTE = "/bilihud-mirror/image"
 MIRROR_MAX_MESSAGES = 200
 
 

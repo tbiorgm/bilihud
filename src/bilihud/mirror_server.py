@@ -3,10 +3,23 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
+from urllib.parse import urlparse
 
+import aiohttp
 from aiohttp import web
 
-from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_EVENTS_ROUTE, MIRROR_ROUTE, MirrorState
+from .mirror_state import (
+    MIRROR_DEFAULT_PORT,
+    MIRROR_EVENTS_ROUTE,
+    MIRROR_IMAGE_ROUTE,
+    MIRROR_ROUTE,
+    MirrorState,
+)
+
+IMAGE_PROXY_HEADERS = {
+    "Referer": "https://live.bilibili.com/",
+    "User-Agent": "Mozilla/5.0 BiliHUD Mirror",
+}
 
 
 def mirror_event_payload(event: str, data: Any) -> str:
@@ -67,6 +80,10 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
       parent.appendChild(document.createTextNode(text));
     }}
 
+    function proxyImageUrl(url) {{
+      return "{MIRROR_IMAGE_ROUTE}?url=" + encodeURIComponent(url || "");
+    }}
+
     function renderEntry(entry) {{
       const row = document.createElement("div");
       row.className = "message";
@@ -87,7 +104,7 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
         if (segment.type === "image") {{
           const img = document.createElement("img");
           img.className = "emoticon";
-          img.src = segment.url;
+          img.src = proxyImageUrl(segment.url);
           img.alt = segment.text || "";
           img.width = segment.width || 34;
           img.height = segment.height || 34;
@@ -136,6 +153,7 @@ class MirrorServer:
         app = web.Application()
         app.router.add_get(MIRROR_ROUTE, self._handle_page)
         app.router.add_get(MIRROR_EVENTS_ROUTE, self._handle_events)
+        app.router.add_get(MIRROR_IMAGE_ROUTE, self._handle_image)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.host, self.port)
@@ -152,6 +170,20 @@ class MirrorServer:
 
     async def _handle_page(self, _request: web.Request) -> web.Response:
         return web.Response(text=mirror_html(), content_type="text/html")
+
+    async def _handle_image(self, request: web.Request) -> web.Response:
+        url = request.query.get("url", "").strip()
+        parsed_url = urlparse(url)
+        if parsed_url.scheme not in {"http", "https"}:
+            raise web.HTTPBadRequest(text="Invalid image URL")
+
+        async with aiohttp.ClientSession(headers=IMAGE_PROXY_HEADERS) as session:
+            async with session.get(url) as response:
+                if response.status >= 400:
+                    raise web.HTTPBadGateway(text=f"Image request failed: {response.status}")
+                data = await response.read()
+                content_type = response.headers.get("Content-Type", "application/octet-stream")
+                return web.Response(body=data, headers={"Content-Type": content_type})
 
     async def _handle_events(self, request: web.Request) -> web.StreamResponse:
         response = web.StreamResponse(
