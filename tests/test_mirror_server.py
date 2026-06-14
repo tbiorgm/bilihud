@@ -33,6 +33,11 @@ def test_mirror_html_uses_transparent_page_and_event_source():
     assert 'createElement("img")' in page
     assert "proxyImageUrl(segment.url)" in page
     assert f'"{MIRROR_IMAGE_ROUTE}?url="' in page
+    assert "entry.badges || []" in page
+    assert 'badge.className = "meta-badge " + badgeClass;' in page
+    assert "border: 1px solid currentColor;" in page
+    assert "badge.style.borderColor = badgeData.color;" in page
+    assert "row.appendChild(badge);" in page
 
 
 def test_mirror_html_defaults_to_2k_stream_readable_styles():

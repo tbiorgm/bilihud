@@ -5,6 +5,85 @@ import blivedm.models.web as web_models
 
 DANMAKU_EMOTICON_MAX_HEIGHT = 34
 DANMAKU_EMOTICON_MAX_WIDTH = 140
+MEDAL_BADGE_COLOR = "#FF79C6"
+WEALTH_BADGE_COLOR = "#C9B6FF"
+
+
+def _badge(text: str, css_class: str, *, title: str = "", style: str = "") -> str:
+    safe_text = html.escape(text, quote=True)
+    safe_title = html.escape(title, quote=True)
+    title_attr = f' title="{safe_title}"' if safe_title else ""
+    style_attr = f' style="{style}"' if style else ""
+    return f'<span class="meta-badge {css_class}"{title_attr}{style_attr}>{safe_text}</span>'
+
+
+def _privilege_icon(privilege_type: int) -> str:
+    return {
+        1: "🛳︎",
+        2: "⛴︎",
+        3: "⚓︎",
+    }.get(privilege_type, "")
+
+
+def _privilege_color(privilege_type: int) -> str:
+    return {
+        1: "#FFD700",
+        2: "#C9B6FF",
+        3: "#86C8FF",
+    }.get(privilege_type, "")
+
+
+def danmaku_author_badges_html(message: web_models.DanmakuMessage) -> str:
+    badges = []
+    for badge in danmaku_author_badges(message):
+        css_class = f"{badge['type']}-badge"
+        style = f"color: {badge['color']};"
+        badges.append(_badge(badge["text"], css_class, title=badge["title"], style=style))
+
+    if not badges:
+        return ""
+    return "&nbsp;".join(badges) + "&nbsp;"
+
+
+def danmaku_author_badges(message: web_models.DanmakuMessage) -> list[dict[str, str]]:
+    badges: list[dict[str, str]] = []
+
+    medal_name = str(getattr(message, "medal_name", "") or "").strip()
+    medal_level = int(getattr(message, "medal_level", 0) or 0)
+    if medal_name and medal_level > 0:
+        badges.append(
+            {
+                "type": "medal",
+                "text": f"{medal_name} {medal_level}",
+                "title": "粉丝牌",
+                "color": MEDAL_BADGE_COLOR,
+            }
+        )
+
+    wealth_level = int(getattr(message, "wealth_level", 0) or 0)
+    if wealth_level > 0:
+        badges.append(
+            {
+                "type": "wealth",
+                "text": f"✦ {wealth_level}",
+                "title": "财富等级",
+                "color": WEALTH_BADGE_COLOR,
+            }
+        )
+
+    privilege_type = int(getattr(message, "privilege_type", 0) or 0)
+    privilege_icon = _privilege_icon(privilege_type)
+    if privilege_icon:
+        badges.append(
+            {
+                "type": "privilege",
+                "text": privilege_icon,
+                "title": "大航海",
+                "color": _privilege_color(privilege_type),
+            }
+        )
+
+    return badges
 
 
 def _emoticon_option_url(options: dict) -> str:

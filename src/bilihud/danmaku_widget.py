@@ -30,6 +30,7 @@ from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 import blivedm.models.web as web_models
 from .danmaku_client import DanmakuClient
 from .danmaku_format import (
+    danmaku_author_badges_html,
     danmaku_message_content_html,
     danmaku_message_emoticon_urls,
 )
@@ -565,16 +566,38 @@ class DanmakuDelegate(QStyledItemDelegate):
         """Construct HTML content based on message type."""
         if isinstance(message, web_models.DanmakuMessage):
             user_color = self.get_user_color(message)
+            badges_html = danmaku_author_badges_html(message)
             content_html = danmaku_message_content_html(message)
             return f"""
             <style>
+                .meta-badge {{
+                    display: inline-block;
+                    padding: 0 4px;
+                    font-family: 'Segoe UI', 'Microsoft YaHei';
+                    font-size: 10px;
+                    line-height: 13px;
+                    font-weight: 700;
+                    color: white;
+                    vertical-align: 1px;
+                }}
+                .medal-badge {{
+                    letter-spacing: 0;
+                }}
+                .wealth-badge {{
+                    color: #C9B6FF;
+                }}
+                .privilege-badge {{
+                    color: #FFD700;
+                    min-width: 13px;
+                    text-align: center;
+                }}
                 .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
                 .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
                 .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
                 .emoticon {{ vertical-align: middle; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }} 
             </style>
-            <p><span class="user">{html.escape(message.uname, quote=True)}</span><span class="colon"> : </span><span class="content">{content_html}</span></p>
+            <p>{badges_html}<span class="user">{html.escape(message.uname, quote=True)}</span><span class="colon"> : </span><span class="content">{content_html}</span></p>
             """
         elif isinstance(message, web_models.GiftMessage):
             return f"""

@@ -6,6 +6,7 @@ from typing import Any
 import blivedm.models.web as web_models
 
 from .danmaku_format import (
+    danmaku_author_badges,
     danmaku_emoticon_scaled_size,
     danmaku_emoticon_url,
     danmaku_inline_emoticons,
@@ -89,13 +90,17 @@ def _interact_text(msg_type: int) -> str:
 
 def message_to_mirror_entry(seq: int, message: Any) -> dict[str, Any]:
     if isinstance(message, web_models.DanmakuMessage):
-        return {
+        entry = {
             "seq": seq,
             "kind": "danmaku",
             "user": message.uname,
             "userColor": user_color_for_message(message),
             "segments": danmaku_segments(message),
         }
+        badges = danmaku_author_badges(message)
+        if badges:
+            entry["badges"] = badges
+        return entry
 
     if isinstance(message, web_models.GiftMessage):
         return {

@@ -56,6 +56,28 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
       font-size: 18px;
       font-weight: 500;
     }}
+    .meta-badge {{
+      display: inline-block;
+      margin-right: 4px;
+      padding: 0 5px;
+      border-radius: 4px;
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 800;
+      color: white;
+      background: transparent;
+      border: 1px solid currentColor;
+      vertical-align: 1px;
+      text-shadow: none;
+    }}
+    .wealth-badge {{
+      color: #C9B6FF;
+    }}
+    .privilege-badge {{
+      color: #F1D17A;
+      min-width: 16px;
+      text-align: center;
+    }}
     .user {{
       font-size: 17px;
       font-weight: 700;
@@ -106,6 +128,20 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
       const row = document.createElement("div");
       row.className = "message";
       row.dataset.seq = String(entry.seq);
+
+      for (const badgeData of entry.badges || []) {{
+        const badge = document.createElement("span");
+        const badgeType = String(badgeData.type || "generic").replace(/[^a-z0-9_-]/gi, "") || "generic";
+        const badgeClass = badgeType + "-badge";
+        badge.className = "meta-badge " + badgeClass;
+        badge.textContent = badgeData.text || "";
+        badge.title = badgeData.title || "";
+        if (badgeData.color) {{
+          badge.style.color = badgeData.color;
+          badge.style.borderColor = badgeData.color;
+        }}
+        row.appendChild(badge);
+      }}
 
       const user = document.createElement("span");
       user.className = "user";

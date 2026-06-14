@@ -89,6 +89,51 @@ def test_message_to_mirror_entry_converts_inline_emoticons():
     ]
 
 
+def test_message_to_mirror_entry_includes_compact_author_badges():
+    message = web_models.DanmakuMessage(
+        uname="Locez",
+        msg="测试",
+        medal_name="小狐",
+        medal_level=26,
+        mcolor=0x2FB6E8,
+        wealth_level=8,
+        privilege_type=3,
+    )
+
+    entry = message_to_mirror_entry(4, message)
+
+    assert entry["badges"] == [
+        {
+            "type": "medal",
+            "text": "小狐 26",
+            "title": "粉丝牌",
+            "color": "#FF79C6",
+        },
+        {
+            "type": "wealth",
+            "text": "✦ 8",
+            "title": "财富等级",
+            "color": "#C9B6FF",
+        },
+        {
+            "type": "privilege",
+            "text": "⚓︎",
+            "title": "大航海",
+            "color": "#86C8FF",
+        },
+    ]
+
+
+def test_message_to_mirror_entry_maps_guard_levels_to_blue_purple_gold_badges():
+    governor = message_to_mirror_entry(1, web_models.DanmakuMessage(uname="A", msg="1", privilege_type=1))
+    admiral = message_to_mirror_entry(2, web_models.DanmakuMessage(uname="B", msg="2", privilege_type=2))
+    captain = message_to_mirror_entry(3, web_models.DanmakuMessage(uname="C", msg="3", privilege_type=3))
+
+    assert governor["badges"] == [{"type": "privilege", "text": "🛳︎", "title": "大航海", "color": "#FFD700"}]
+    assert admiral["badges"] == [{"type": "privilege", "text": "⛴︎", "title": "大航海", "color": "#C9B6FF"}]
+    assert captain["badges"] == [{"type": "privilege", "text": "⚓︎", "title": "大航海", "color": "#86C8FF"}]
+
+
 def test_message_to_mirror_entry_converts_gift_message():
     message = web_models.GiftMessage(uname="Locez", action="赠送", gift_name="辣条", num=3)
 

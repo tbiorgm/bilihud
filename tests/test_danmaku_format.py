@@ -1,6 +1,7 @@
 import importlib
 
 from bilihud.danmaku_format import (
+    danmaku_author_badges_html,
     danmaku_emoticon_scaled_size,
     danmaku_emoticon_url,
     danmaku_message_content_html,
@@ -114,3 +115,45 @@ def test_danmaku_message_emoticon_urls_include_inline_emots_once():
     assert danmaku_message_emoticon_urls(message) == [
         "https://i0.hdslb.com/bfs/live/tangyuan.png"
     ]
+
+
+def test_danmaku_author_badges_html_renders_compact_metadata_badges():
+    message = web_models.DanmakuMessage(
+        medal_name="<狐>",
+        medal_level=26,
+        mcolor=0x2FB6E8,
+        wealth_level=8,
+        privilege_type=3,
+    )
+
+    badges = danmaku_author_badges_html(message)
+
+    assert "meta-badge medal-badge" in badges
+    assert "&lt;狐&gt;" in badges
+    assert "26" in badges
+    assert "#FF79C6" in badges
+    assert "&lt;狐&gt; 26</span>&nbsp;<span" in badges
+    assert "meta-badge wealth-badge" in badges
+    assert "✦" in badges
+    assert "8" in badges
+    assert "✦ 8</span>&nbsp;<span" in badges
+    assert "meta-badge privilege-badge" in badges
+    assert "⚓︎" in badges
+    assert "舰长" not in badges
+    assert "荣耀" not in badges
+    assert "荣" not in badges
+
+
+def test_danmaku_author_badges_html_omits_empty_metadata():
+    message = web_models.DanmakuMessage()
+
+    assert danmaku_author_badges_html(message) == ""
+
+
+def test_danmaku_author_badges_html_maps_guard_levels_to_blue_purple_gold():
+    assert "🛳︎" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=1))
+    assert "#FFD700" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=1))
+    assert "⛴︎" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=2))
+    assert "#C9B6FF" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=2))
+    assert "⚓︎" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=3))
+    assert "#86C8FF" in danmaku_author_badges_html(web_models.DanmakuMessage(privilege_type=3))

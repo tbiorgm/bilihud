@@ -104,6 +104,33 @@ def test_danmaku_delegate_renders_local_system_messages():
     assert html.strip()
 
 
+def test_danmaku_delegate_renders_compact_author_badges():
+    message = danmaku_widget.web_models.DanmakuMessage(
+        uname="Locez",
+        msg="测试",
+        medal_name="小狐",
+        medal_level=26,
+        mcolor=0x2FB6E8,
+        wealth_level=8,
+        privilege_type=3,
+    )
+
+    html = danmaku_widget.DanmakuDelegate().get_html_for_message(message)
+
+    assert "meta-badge medal-badge" in html
+    assert "小狐 26" in html
+    assert "小狐 26</span>&nbsp;<span" in html
+    assert "meta-badge wealth-badge" in html
+    assert "✦ 8" in html
+    assert "✦ 8</span>&nbsp;<span" in html
+    assert "meta-badge privilege-badge" in html
+    assert "⚓︎" in html
+    assert "⚓︎</span>&nbsp;<span class=\"user\"" in html
+    assert "舰长" not in html
+    assert "荣8" not in html
+    assert html.index("小狐 26") < html.index("Locez")
+
+
 def test_danmaku_delegate_does_not_reuse_document_for_reused_message_id(monkeypatch):
     _app()
 
