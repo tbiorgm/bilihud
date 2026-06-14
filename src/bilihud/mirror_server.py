@@ -44,29 +44,30 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
       box-sizing: border-box;
       width: 100vw;
       min-height: 100vh;
-      padding: 10px;
-      background: rgba(0, 0, 0, 0.47);
+      padding: 14px;
+      background: rgba(0, 0, 0, 0.56);
       border-radius: 8px;
       color: white;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
     }}
     .message {{
-      line-height: 1.2;
-      margin: 0 0 4px;
-      font-size: 13px;
+      line-height: 1.32;
+      margin: 0 0 6px;
+      font-size: 18px;
       font-weight: 500;
     }}
     .user {{
-      font-size: 12px;
+      font-size: 17px;
       font-weight: 700;
     }}
     .colon {{
       color: white;
-      font-size: 12px;
+      font-size: 17px;
     }}
     .emoticon {{
       vertical-align: middle;
-      max-height: 34px;
-      max-width: 140px;
+      max-height: 44px;
+      max-width: 180px;
     }}
   </style>
 </head>
@@ -82,6 +83,23 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
 
     function proxyImageUrl(url) {{
       return "{MIRROR_IMAGE_ROUTE}?url=" + encodeURIComponent(url || "");
+    }}
+
+    function scaleImageSize(width, height) {{
+      const sourceWidth = Number(width) || 44;
+      const sourceHeight = Number(height) || 44;
+      if (sourceWidth <= 0 || sourceHeight <= 0) {{
+        return {{ width: 44, height: 44 }};
+      }}
+      let scale = 44 / sourceHeight;
+      let nextWidth = Math.max(1, Math.round(sourceWidth * scale));
+      let nextHeight = 44;
+      if (nextWidth > 180) {{
+        scale = 180 / sourceWidth;
+        nextWidth = 180;
+        nextHeight = Math.max(1, Math.round(sourceHeight * scale));
+      }}
+      return {{ width: nextWidth, height: nextHeight }};
     }}
 
     function renderEntry(entry) {{
@@ -106,8 +124,9 @@ def mirror_html(events_route: str = MIRROR_EVENTS_ROUTE) -> str:
           img.className = "emoticon";
           img.src = proxyImageUrl(segment.url);
           img.alt = segment.text || "";
-          img.width = segment.width || 34;
-          img.height = segment.height || 34;
+          const imageSize = scaleImageSize(segment.width, segment.height);
+          img.width = imageSize.width;
+          img.height = imageSize.height;
           row.appendChild(img);
         }} else {{
           appendText(row, segment.text || "");

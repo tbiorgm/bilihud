@@ -35,6 +35,21 @@ def test_mirror_html_uses_transparent_page_and_event_source():
     assert f'"{MIRROR_IMAGE_ROUTE}?url="' in page
 
 
+def test_mirror_html_defaults_to_2k_stream_readable_styles():
+    page = mirror_html(MIRROR_EVENTS_ROUTE)
+
+    assert "padding: 14px;" in page
+    assert "background: rgba(0, 0, 0, 0.56);" in page
+    assert "line-height: 1.32;" in page
+    assert "margin: 0 0 6px;" in page
+    assert "font-size: 18px;" in page
+    assert "font-size: 17px;" in page
+    assert "text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);" in page
+    assert "max-height: 44px;" in page
+    assert "max-width: 180px;" in page
+    assert "scaleImageSize(segment.width, segment.height)" in page
+
+
 def test_mirror_event_payload_serializes_named_event():
     payload = mirror_event_payload("append", {"seq": 1, "segments": []})
 
