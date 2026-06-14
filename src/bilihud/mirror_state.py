@@ -11,7 +11,6 @@ from .danmaku_format import (
     danmaku_inline_emoticons,
 )
 
-
 MIRROR_DEFAULT_PORT = 2233
 MIRROR_ROUTE = "/bilihud-mirror"
 MIRROR_EVENTS_ROUTE = "/bilihud-mirror/events"

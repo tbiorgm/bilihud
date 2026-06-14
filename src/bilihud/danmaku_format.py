@@ -3,7 +3,6 @@ import re
 
 import blivedm.models.web as web_models
 
-
 DANMAKU_EMOTICON_MAX_HEIGHT = 34
 DANMAKU_EMOTICON_MAX_WIDTH = 140
 

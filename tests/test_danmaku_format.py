@@ -1,5 +1,4 @@
-import bilihud  # noqa: F401
-import blivedm.models.web as web_models
+import importlib
 
 from bilihud.danmaku_format import (
     danmaku_emoticon_scaled_size,
@@ -7,6 +6,8 @@ from bilihud.danmaku_format import (
     danmaku_message_content_html,
     danmaku_message_emoticon_urls,
 )
+
+web_models = importlib.import_module("blivedm.models.web")
 
 
 def test_danmaku_emoticon_url_only_uses_pure_emoticon_messages():

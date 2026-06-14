@@ -1,7 +1,8 @@
-import bilihud  # noqa: F401
-import blivedm.models.web as web_models
+import importlib
 
 from bilihud.mirror_state import MirrorState, message_to_mirror_entry
+
+web_models = importlib.import_module("blivedm.models.web")
 
 
 def test_message_to_mirror_entry_converts_text_danmaku():
