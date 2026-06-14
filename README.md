@@ -92,7 +92,7 @@ source .venv/bin/activate
 ### 2. 启动
 
 ```bash
-python -m src.bilihud.main
+uv run bilihud
 ```
 
 ### 3. 开播与 OBS 推流
