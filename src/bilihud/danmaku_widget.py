@@ -34,6 +34,7 @@ from .danmaku_format import (
 )
 from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorState
 from .mirror_server import MirrorServer
+from .mirror_settings_dialog import MirrorSettingsDialog
 from .utils import load_config, save_config
 from .qr_login_dialog import QRLoginDialog
 from .live_control_dialog import LiveControlDialog
@@ -486,6 +487,7 @@ class DanmakuWidget(QWidget):
         self.mirror_state = MirrorState()
         self.mirror_server: MirrorServer | None = None
         self.mirror_enabled = bool(config.get("mirror_enabled", False))
+        self.mirror_error = ""
         self.mirror_port = int(config.get("mirror_port", MIRROR_DEFAULT_PORT))
         # Track Layer Shell position manually because Qt frameGeometry() is unreliable (returns 0,0)
         self.layer_pos = QPoint(0, 0)
@@ -884,13 +886,9 @@ class DanmakuWidget(QWidget):
         self.tray_live_control_action.triggered.connect(self.open_live_control)
         tray_menu.addAction(self.tray_live_control_action)
 
-        self.tray_mirror_action = QAction("启动 BiliHUD Mirror", self)
-        self.tray_mirror_action.triggered.connect(self.toggle_mirror_server)
+        self.tray_mirror_action = QAction("BiliHUD Mirror", self)
+        self.tray_mirror_action.triggered.connect(self.open_mirror_settings)
         tray_menu.addAction(self.tray_mirror_action)
-
-        self.tray_mirror_url_action = QAction("显示 Mirror URL", self)
-        self.tray_mirror_url_action.triggered.connect(self.show_mirror_url)
-        tray_menu.addAction(self.tray_mirror_url_action)
         
         quit_action = QAction("退出程序", self)
         quit_action.triggered.connect(self.quit_app)
@@ -974,7 +972,7 @@ class DanmakuWidget(QWidget):
     @qasync.asyncSlot()
     async def quit_app(self):
         if self.mirror_server is not None:
-            await self.stop_mirror_server()
+            await self.shutdown_mirror_server()
         QApplication.quit()
 
     def toggle_gaming_mode_from_tray(self, checked):
@@ -1368,54 +1366,80 @@ class DanmakuWidget(QWidget):
         self._live_control_dialog.raise_()
         self._live_control_dialog.activateWindow()
 
+    def open_mirror_settings(self):
+        if not hasattr(self, '_mirror_settings_dialog'):
+            self._mirror_settings_dialog = MirrorSettingsDialog(self)
+        self._mirror_settings_dialog.refresh()
+        self._mirror_settings_dialog.show()
+        self._mirror_settings_dialog.raise_()
+        self._mirror_settings_dialog.activateWindow()
+
     @property
     def mirror_url(self) -> str:
         return f"http://127.0.0.1:{self.mirror_port}{MIRROR_ROUTE}"
 
     @qasync.asyncSlot()
     async def toggle_mirror_server(self):
-        if self.mirror_server is None:
+        await self.set_mirror_enabled(self.mirror_server is None)
+        self.refresh_mirror_settings()
+
+    async def set_mirror_enabled(self, enabled: bool):
+        if enabled:
+            self.mirror_enabled = True
+            self.mirror_error = ""
+            save_config({"mirror_enabled": True, "mirror_port": self.mirror_port})
             await self.start_mirror_server()
         else:
-            await self.stop_mirror_server()
+            self.mirror_enabled = False
+            self.mirror_error = ""
+            save_config({"mirror_enabled": False, "mirror_port": self.mirror_port})
+            await self.shutdown_mirror_server()
+            self.add_system_message("BiliHUD Mirror 已停止。")
+        self.refresh_mirror_settings()
+
+    def refresh_mirror_settings(self):
+        if hasattr(self, '_mirror_settings_dialog'):
+            self._mirror_settings_dialog.refresh()
+
+    def mirror_status_text(self) -> str:
+        if self.mirror_server is not None:
+            return "已启动"
+        if self.mirror_error:
+            return f"启动失败: {self.mirror_error}"
+        if self.mirror_enabled:
+            return "已启用，当前未启动"
+        return "未启动"
 
     async def start_mirror_server(self):
         if self.mirror_server is not None:
-            self.show_mirror_url()
+            self.refresh_mirror_settings()
             return
 
         server = MirrorServer(self.mirror_state, port=self.mirror_port)
         try:
             await server.start()
         except OSError as exc:
+            self.mirror_error = str(exc)
             self.add_system_message(f"BiliHUD Mirror 启动失败: {exc}", "error")
+            self.refresh_mirror_settings()
             return
 
         self.mirror_server = server
-        self.mirror_enabled = True
-        save_config({"mirror_enabled": True, "mirror_port": self.mirror_port})
-        self.tray_mirror_action.setText("停止 BiliHUD Mirror")
+        self.mirror_error = ""
+        self.refresh_mirror_settings()
         self.add_system_message(f"BiliHUD Mirror 已启动: {server.url}")
 
     async def stop_mirror_server(self):
+        await self.set_mirror_enabled(False)
+
+    async def shutdown_mirror_server(self):
         if self.mirror_server is None:
             return
 
         server = self.mirror_server
         self.mirror_server = None
         await server.stop()
-        self.mirror_enabled = False
-        save_config({"mirror_enabled": False, "mirror_port": self.mirror_port})
-        self.tray_mirror_action.setText("启动 BiliHUD Mirror")
-        self.add_system_message("BiliHUD Mirror 已停止。")
-
-    def show_mirror_url(self):
-        self.tray_icon.showMessage(
-            "BiliHUD Mirror",
-            self.mirror_server.url if self.mirror_server else self.mirror_url,
-            QSystemTrayIcon.MessageIcon.Information,
-            5000,
-        )
+        self.refresh_mirror_settings()
 
     def set_live_status_indicator(self, is_live: bool):
         """显示或隐藏标题栏直播状态点。"""
