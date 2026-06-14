@@ -136,12 +136,12 @@ class DanmakuClient:
                     join_task = asyncio.create_task(client.join())
                     try:
                         await asyncio.wait_for(asyncio.shield(join_task), timeout=normal_timeout)
-                    except TimeoutError:
+                    except asyncio.TimeoutError:
                         if session and not session.closed:
                             await session.close()
                         try:
                             await asyncio.wait_for(asyncio.shield(join_task), timeout=forced_timeout)
-                        except TimeoutError as exc:
+                        except asyncio.TimeoutError as exc:
                             stop_error = DanmakuShutdownError(
                                 f"弹幕连接未能在强制关闭后停止，room_id={self.room_id}"
                             )

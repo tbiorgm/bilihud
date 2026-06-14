@@ -1,8 +1,16 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
 from bilihud.danmaku_client import DanmakuClient, DanmakuShutdownError
+
+
+def test_stop_catches_asyncio_timeout_error_for_python_310_compatibility():
+    source = Path("src/bilihud/danmaku_client.py").read_text(encoding="utf-8")
+
+    assert "except asyncio.TimeoutError" in source
+    assert "except TimeoutError" not in source
 
 
 class FakeSession:
