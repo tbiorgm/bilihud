@@ -34,6 +34,7 @@ from .danmaku_format import (
     danmaku_message_emoticon_urls,
 )
 from .live_emoticons import LiveEmoticon, LiveEmoticonPackage
+from .live_api import get_anchor_live_room_id
 from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorState
 from .mirror_server import MirrorServer
 from .mirror_settings_dialog import MirrorSettingsDialog
@@ -1489,74 +1490,101 @@ class DanmakuWidget(QWidget):
     def setup_danmaku_client(self):
         self.danmaku_client = None
 
+    def _wire_danmaku_client(self, client: DanmakuClient):
+        client.set_danmaku_callback(self.on_danmaku_received)
+        client.set_gift_callback(self.on_gift_received)
+        client.set_interact_callback(self.on_interact_received)
+        client.set_login_failed_callback(self.on_login_failed)
+
+    def _set_connecting_ui(self):
+        self.connect_button.setText("连接中...")
+        self.connect_button.setEnabled(False)
+
+    def _set_connected_ui(self):
+        self.connect_button.setText("断开")
+        self.connect_button.setChecked(True)
+        self.connect_button.setEnabled(True)
+        self.connect_button.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(244, 67, 54, 150);
+                color: white;
+                border: 1px solid rgba(244, 67, 54, 200);
+                border-radius: 6px; padding: 4px 10px;
+            }
+            QPushButton:hover { background-color: rgba(244, 67, 54, 200); }
+        """)
+
+    def _set_disconnected_ui(self):
+        self.connect_button.setText("连接")
+        self.connect_button.setChecked(False)
+        self.connect_button.setEnabled(True)
+        self.connect_button.setStyleSheet("""
+            QPushButton {
+                color: white;
+                background-color: rgba(255, 255, 255, 20);
+                border: 1px solid rgba(255, 255, 255, 30);
+                border-radius: 6px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover { background-color: rgba(255, 255, 255, 40); }
+            QPushButton:checked { background-color: rgba(76, 175, 80, 150); }
+        """)
+
+    async def _connect_to_room_id(self, room_id: int):
+        if room_id <= 0:
+            raise ValueError("直播间号无效")
+
+        if self.danmaku_client is not None and self.danmaku_client.client and self.room_id == room_id:
+            self.room_id_input.setText(str(room_id))
+            self._set_connected_ui()
+            return
+
+        if self.danmaku_client is not None and self.danmaku_client.client:
+            await self._disconnect_current_room()
+
+        self.room_id = room_id
+        self.room_id_input.setText(str(room_id))
+        self.danmaku_client = DanmakuClient(room_id, self.sessdata)
+        self._wire_danmaku_client(self.danmaku_client)
+        save_config({'room_id': room_id})
+        self._set_connecting_ui()
+        try:
+            await self.danmaku_client.start()
+        except Exception:
+            self.danmaku_client = None
+            self._set_disconnected_ui()
+            raise
+        self._set_connected_ui()
+
+    async def _disconnect_current_room(self):
+        self.connect_button.setEnabled(False)
+        try:
+            if self.danmaku_client is not None:
+                await self.danmaku_client.stop()
+        except Exception as e:
+            self._set_connected_ui()
+            self.add_system_message(f"断开失败: {e}", "error")
+            print(f"Disconnect failed: {e}")
+            raise
+        self.danmaku_client = None
+        self._set_disconnected_ui()
+
     @qasync.asyncSlot()
     async def toggle_connection(self):
         """切换连接状态"""
         if self.danmaku_client is None or not self.danmaku_client.client:
             # 连接
             try:
-                self.room_id = int(self.room_id_input.text())
-                self.room_id_input.setText(str(self.room_id))
-                
-                self.danmaku_client = DanmakuClient(self.room_id, self.sessdata)
-                self.danmaku_client.set_danmaku_callback(self.on_danmaku_received)
-                self.danmaku_client.set_gift_callback(self.on_gift_received)
-                self.danmaku_client.set_interact_callback(self.on_interact_received)
-                self.danmaku_client.set_login_failed_callback(self.on_login_failed)
-                
-                # 保存房间号
-                save_config({'room_id': self.room_id})
-                
-                # Update UI to connecting state
-                self.connect_button.setText("连接中...")
-                self.connect_button.setEnabled(False)
-                
-                await self.danmaku_client.start()
-                
-                self.connect_button.setText("断开")
-                self.connect_button.setChecked(True)
-                self.connect_button.setEnabled(True)
-                self.connect_button.setStyleSheet("""
-                    QPushButton {
-                        background-color: rgba(244, 67, 54, 150);
-                        color: white; 
-                        border: 1px solid rgba(244, 67, 54, 200);
-                        border-radius: 6px; padding: 4px 10px;
-                    }
-                    QPushButton:hover { background-color: rgba(244, 67, 54, 200); }
-                """)
+                await self._connect_to_room_id(int(self.room_id_input.text()))
             except Exception as e:
-                self.connect_button.setText("连接")
-                self.connect_button.setEnabled(True)
+                self._set_disconnected_ui()
                 print(f"Connection failed: {e}")
         else:
             # 断开
-            self.connect_button.setEnabled(False)
             try:
-                if self.danmaku_client is not None:
-                    await self.danmaku_client.stop()
-            except Exception as e:
-                self.connect_button.setText("断开")
-                self.connect_button.setChecked(True)
-                self.connect_button.setEnabled(True)
-                self.add_system_message(f"断开失败: {e}", "error")
-                print(f"Disconnect failed: {e}")
+                await self._disconnect_current_room()
+            except Exception:
                 return
-            self.danmaku_client = None
-            self.connect_button.setText("连接")
-            self.connect_button.setChecked(False)
-            self.connect_button.setEnabled(True)
-            self.connect_button.setStyleSheet("""
-                QPushButton {
-                    color: white;
-                    background-color: rgba(255, 255, 255, 20);
-                    border: 1px solid rgba(255, 255, 255, 30);
-                    border-radius: 6px;
-                    padding: 4px 10px;
-                }
-                QPushButton:hover { background-color: rgba(255, 255, 255, 40); }
-                QPushButton:checked { background-color: rgba(76, 175, 80, 150); }
-            """)
             
     def save_room_id(self):
         try:
@@ -1605,12 +1633,34 @@ class DanmakuWidget(QWidget):
         if self.mirror_server is not None:
             self.mirror_server.publish_append(entry)
 
-    def open_live_control(self):
+    async def _ensure_live_control_room(self) -> int:
+        auth_manager = AuthManager()
+        session = None
+        try:
+            session, _from_keyring = await auth_manager.create_authenticated_session()
+            anchor_room_id = await get_anchor_live_room_id(session)
+        finally:
+            if session is not None and not session.closed:
+                await session.close()
+
+        await self._connect_to_room_id(anchor_room_id)
+        return anchor_room_id
+
+    @qasync.asyncSlot()
+    async def open_live_control(self):
         """打开直播控制窗口"""
+        try:
+            anchor_room_id = await self._ensure_live_control_room()
+        except Exception as e:
+            self.add_system_message(f"无法打开直播控制: {e}", "error")
+            print(f"Open live control failed: {e}")
+            return
+
         if not hasattr(self, '_live_control_dialog'):
             self._live_control_dialog = LiveControlDialog(self)
             self._live_control_dialog.live_status_changed.connect(self.set_live_status_indicator)
-        self._live_control_dialog.set_room_id(self.room_id)
+            self._live_control_dialog.set_ensure_hud_room_callback(self._connect_to_room_id)
+        self._live_control_dialog.set_room_id(anchor_room_id)
         self._live_control_dialog.show()
         self._live_control_dialog.raise_()
         self._live_control_dialog.activateWindow()

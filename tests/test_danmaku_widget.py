@@ -305,3 +305,25 @@ def test_danmaku_widget_source_wires_emoticon_picker_to_client_methods():
     assert "self.input_area.emoticon_requested.connect(self.open_emoticon_picker)" in source
     assert "await self.danmaku_client.fetch_live_emoticons()" in source
     assert "await self.danmaku_client.send_live_emoticon(emoticon)" in source
+
+
+def test_live_control_uses_anchor_room_and_reconnects_hud_source():
+    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+
+    assert "get_anchor_live_room_id" in source
+    assert "async def open_live_control(self):" in source
+    assert "anchor_room_id = await self._ensure_live_control_room()" in source
+    assert "self._live_control_dialog.set_room_id(anchor_room_id)" in source
+    assert "self._live_control_dialog.set_room_id(self.room_id)" not in source
+    assert "await self._connect_to_room_id(anchor_room_id)" in source
+    assert "self._live_control_dialog.set_ensure_hud_room_callback(self._connect_to_room_id)" in source
+
+
+def test_live_control_start_live_ensures_hud_room_before_starting():
+    source = Path("src/bilihud/live_control_dialog.py").read_text(encoding="utf-8")
+
+    assert "def set_ensure_hud_room_callback" in source
+    assert "await self._ensure_hud_room(room_id)" in source
+    assert source.index("await self._ensure_hud_room(room_id)") < source.index(
+        "await self._sync_room_before_start_lenient"
+    )

@@ -148,6 +148,13 @@ def parse_room_info(room_data: Mapping[str, Any]) -> RoomInfo:
     )
 
 
+def parse_anchor_live_room_id(data: Mapping[str, Any]) -> int:
+    room_id = int(data.get("room_id") or 0)
+    if room_id <= 0:
+        raise LiveApiError("未能获取当前账号的主播直播间号")
+    return room_id
+
+
 async def _request_json(
     session: aiohttp.ClientSession,
     method: str,
@@ -205,6 +212,16 @@ async def get_room_info(session: aiohttp.ClientSession, room_id: int) -> RoomInf
         headers={"Origin": BASE_URL},
     )
     return parse_room_info(data)
+
+
+async def get_anchor_live_room_id(session: aiohttp.ClientSession) -> int:
+    data = await _request_json(
+        session,
+        "GET",
+        "/xlive/web-ucenter/user/live_info",
+        headers={"Origin": BASE_URL},
+    )
+    return parse_anchor_live_room_id(data)
 
 
 async def get_live_version(session: aiohttp.ClientSession, now_ms: int | None = None) -> LiveVersion:

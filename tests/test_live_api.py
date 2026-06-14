@@ -4,6 +4,7 @@ from bilihud.live_api import (
     app_sign,
     format_face_auth_url,
     is_live_rate_limited_error,
+    parse_anchor_live_room_id,
     parse_room_info,
     parse_stream_credentials,
     room_action_enabled_state,
@@ -85,6 +86,19 @@ def test_parse_room_info_extracts_title_and_area_ids():
     assert room_info.parent_area_id == "3"
     assert room_info.area_id == "371"
     assert room_info.is_live is True
+
+
+def test_parse_anchor_live_room_id_extracts_positive_room_id():
+    assert parse_anchor_live_room_id({"room_id": 7450109}) == 7450109
+
+
+def test_parse_anchor_live_room_id_rejects_missing_room_id():
+    try:
+        parse_anchor_live_room_id({"room_id": 0})
+    except LiveApiError as exc:
+        assert "直播间号" in str(exc)
+    else:
+        raise AssertionError("expected LiveApiError")
 
 
 def test_room_action_enabled_state_disables_start_while_live():
