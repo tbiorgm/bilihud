@@ -4,6 +4,7 @@ import os
 import asyncio
 import qasync
 import ctypes
+import html
 from ctypes import c_void_p, c_int, c_ulong
 from typing import Optional
 import PyQt6.sip as sip
@@ -21,8 +22,9 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
 from PyQt6.QtCore import (
-    QTimer, Qt, pyqtSignal, QSize, QPoint, QRect
+    QTimer, Qt, pyqtSignal, QSize, QPoint, QRect, QUrl
 )
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 
 import blivedm.models.web as web_models
 from .danmaku_client import DanmakuClient
@@ -36,6 +38,50 @@ from .layer_shell_loader import (
     gaming_mode_available,
     should_disable_layer_shell,
 )
+
+
+DANMAKU_EMOTICON_MAX_HEIGHT = 34
+DANMAKU_EMOTICON_MAX_WIDTH = 140
+
+
+def danmaku_emoticon_url(message: web_models.DanmakuMessage) -> str:
+    if message.dm_type != 1:
+        return ""
+    url = str(message.emoticon_options_dict.get("url") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return ""
+    return url
+
+
+def danmaku_emoticon_scaled_size(options: dict) -> tuple[int, int]:
+    try:
+        source_width = int(options.get("width") or 0)
+        source_height = int(options.get("height") or 0)
+    except (TypeError, ValueError):
+        source_width = 0
+        source_height = 0
+
+    if source_width <= 0 or source_height <= 0:
+        return DANMAKU_EMOTICON_MAX_HEIGHT, DANMAKU_EMOTICON_MAX_HEIGHT
+
+    scale = DANMAKU_EMOTICON_MAX_HEIGHT / source_height
+    width = max(1, round(source_width * scale))
+    height = DANMAKU_EMOTICON_MAX_HEIGHT
+    if width > DANMAKU_EMOTICON_MAX_WIDTH:
+        width = DANMAKU_EMOTICON_MAX_WIDTH
+        height = max(1, round(source_height * (DANMAKU_EMOTICON_MAX_WIDTH / source_width)))
+    return width, height
+
+
+def danmaku_message_content_html(message: web_models.DanmakuMessage) -> str:
+    emoticon_url = danmaku_emoticon_url(message)
+    if emoticon_url:
+        width, height = danmaku_emoticon_scaled_size(message.emoticon_options_dict)
+        alt = html.escape(message.msg.strip() or "表情", quote=True)
+        src = html.escape(emoticon_url, quote=True)
+        return f'<img class="emoticon" src="{src}" width="{width}" height="{height}" alt="{alt}" />'
+    return html.escape(message.msg.strip(), quote=True)
+
 
 class ModernInputWidget(QWidget):
     """
@@ -237,6 +283,9 @@ class DanmakuDelegate(QStyledItemDelegate):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cache = {} # Map[id(message), QTextDocument]
+        self._emoticon_cache: dict[str, QImage | None] = {}
+        self._emoticon_docs: dict[str, list[QTextDocument]] = {}
+        self._network_manager = QNetworkAccessManager(self)
         # We need to invalidate cache if width changes, but updating width on existing doc is cheap.
 
     def _get_document(self, message, width, font):
@@ -258,6 +307,7 @@ class DanmakuDelegate(QStyledItemDelegate):
         doc.setDefaultFont(font)
         doc.setHtml(html_content)
         doc.setTextWidth(width)
+        self._attach_emoticon_resource(doc, message)
         
         self._cache[msg_id] = doc
         
@@ -268,6 +318,43 @@ class DanmakuDelegate(QStyledItemDelegate):
         # So we just assume cache size ~= list size.
         
         return doc
+
+    def _attach_emoticon_resource(self, doc: QTextDocument, message) -> None:
+        if not isinstance(message, web_models.DanmakuMessage):
+            return
+
+        url = danmaku_emoticon_url(message)
+        if not url:
+            return
+
+        qurl = QUrl(url)
+        cached = self._emoticon_cache.get(url)
+        if cached:
+            doc.addResource(QTextDocument.ResourceType.ImageResource, qurl, cached)
+            return
+        if url not in self._emoticon_cache:
+            self._emoticon_cache[url] = None
+            reply = self._network_manager.get(QNetworkRequest(qurl))
+            reply.finished.connect(lambda reply=reply, url=url: self._on_emoticon_loaded(reply, url))
+
+        self._emoticon_docs.setdefault(url, []).append(doc)
+
+    def _on_emoticon_loaded(self, reply, url: str) -> None:
+        image = QImage.fromData(reply.readAll())
+        reply.deleteLater()
+        docs = self._emoticon_docs.pop(url, [])
+        if image.isNull():
+            self._emoticon_cache.pop(url, None)
+            return
+
+        self._emoticon_cache[url] = image
+        qurl = QUrl(url)
+        for doc in docs:
+            doc.addResource(QTextDocument.ResourceType.ImageResource, qurl, image)
+
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "viewport"):
+            parent.viewport().update()
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
         """Paint the item content directly."""
@@ -314,14 +401,16 @@ class DanmakuDelegate(QStyledItemDelegate):
         """Construct HTML content based on message type."""
         if isinstance(message, web_models.DanmakuMessage):
             user_color = self.get_user_color(message)
+            content_html = danmaku_message_content_html(message)
             return f"""
             <style>
                 .user {{ color: {user_color}; font-weight: bold; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
                 .colon {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 12px; }}
                 .content {{ color: white; font-family: 'Segoe UI', 'Microsoft YaHei'; font-size: 13px; font-weight: 500; }}
+                .emoticon {{ vertical-align: middle; }}
                 body, p {{ line-height: 120%; margin: 0; padding: 0; }} 
             </style>
-            <p><span class="user">{message.uname}</span><span class="colon"> : </span><span class="content">{message.msg.strip()}</span></p>
+            <p><span class="user">{html.escape(message.uname, quote=True)}</span><span class="colon"> : </span><span class="content">{content_html}</span></p>
             """
         elif isinstance(message, web_models.GiftMessage):
             return f"""
