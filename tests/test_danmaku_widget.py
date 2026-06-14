@@ -13,3 +13,26 @@ def test_danmaku_widget_does_not_manually_process_qt_events():
 
 def test_danmaku_widget_imports_qimage_for_emoticon_loader():
     assert danmaku_widget.QImage is QImage
+
+
+def test_danmaku_widget_imports_mirror_components():
+    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+
+    assert "from .mirror_state import MIRROR_DEFAULT_PORT, MIRROR_ROUTE, MirrorState" in source
+    assert "from .mirror_server import MirrorServer" in source
+
+
+def test_danmaku_widget_add_message_publishes_to_mirror():
+    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+
+    assert "entry = self.mirror_state.add_message(message)" in source
+    assert "self.mirror_server.publish_append(entry)" in source
+
+
+def test_danmaku_widget_exposes_bilihud_mirror_tray_action():
+    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+
+    assert "BiliHUD Mirror" in source
+    assert "MIRROR_ROUTE" in source
+    assert "obs-mirror" not in source
+    assert "obs-danmaku" not in source
