@@ -1432,44 +1432,43 @@ class DanmakuWidget(QWidget):
             #    return
 
             has_layer_shell = (self.layer_shell_lib is not None)
-            
+
             if has_layer_shell:
                 try:
                     cpp_ptr = sip.unwrapinstance(self.windowHandle())
-                    
+
                     current_pos = self.layer_pos
                     target_pos = current_pos + diff
-                    
+
                     # [Screen Bounds Clamping]
                     current_screen = self.windowHandle().screen()
                     if current_screen:
                         s_geo = current_screen.geometry()
-                        
+
                         min_x = s_geo.x() - self.width() + 50
                         max_x = s_geo.x() + s_geo.width() - 50
-                        min_y = s_geo.y() - 50 
+                        min_y = s_geo.y() - 50
                         max_y = s_geo.y() + s_geo.height() - 50
-                        
+
                         clamped_x = max(min_x, min(target_pos.x(), max_x))
                         clamped_y = max(min_y, min(target_pos.y(), max_y))
-                        
+
                         target_pos = QPoint(clamped_x, clamped_y)
-                    
+
                     self.layer_pos = target_pos
-                    
+
                     self.layer_shell_lib.set_anchor_position(
-                        ctypes.c_void_p(cpp_ptr), 
-                        self.layer_pos.x(), 
+                        ctypes.c_void_p(cpp_ptr),
+                        self.layer_pos.x(),
                         self.layer_pos.y()
                     )
-                    self.update() #[Required] Triggers wl_surface.commit to apply position 
-                    
+
                 except Exception as e:
                     print(f"Wayland drag error: {e}")
             else:
                 new_pos = event.globalPosition().toPoint() - self._drag_local_pos
                 self.move(new_pos)
-            
+
             event.accept()
 
     def resizeEvent(self, event):

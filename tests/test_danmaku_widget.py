@@ -1,3 +1,4 @@
+import ast
 import os
 from pathlib import Path
 
@@ -22,6 +23,34 @@ def test_danmaku_widget_does_not_manually_process_qt_events():
     source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
 
     assert "QApplication.processEvents()" not in source
+
+
+def test_layer_shell_drag_does_not_force_widget_repaint():
+    source = Path("src/bilihud/danmaku_widget.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    method_source = None
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "DanmakuWidget":
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef) and item.name == "mouseMoveEvent":
+                    method_source = ast.get_source_segment(source, item)
+                    break
+
+    assert method_source is not None
+    assert "set_anchor_position" in method_source
+    assert "self.update()" not in method_source
+
+
+def test_layer_shell_anchor_position_commits_surface():
+    source = Path("src/bilihud/layer_shell_bridge.cpp").read_text(encoding="utf-8")
+    function_start = source.index("void set_anchor_position")
+    function_end = source.index("void set_keyboard_interactivity", function_start)
+    function_source = source[function_start:function_end]
+
+    assert "ls_window->setMargins(margins);" in function_source
+    assert "nativeResourceForWindow(\"surface\", window)" in function_source
+    assert "wl_surface_commit(surface);" in function_source
 
 
 def test_danmaku_widget_imports_qimage_for_emoticon_loader():

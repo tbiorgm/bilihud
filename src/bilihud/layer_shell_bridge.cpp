@@ -80,6 +80,14 @@ extern "C" {
             margins.setRight(0);
             margins.setBottom(0);
             ls_window->setMargins(margins);
+
+            QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
+            if (!native) return;
+
+            struct wl_surface* surface = (struct wl_surface*)native->nativeResourceForWindow("surface", window);
+            if (surface) {
+                wl_surface_commit(surface);
+            }
         }
     }
 
