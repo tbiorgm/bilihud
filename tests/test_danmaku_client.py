@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urlparse
 import aiohttp
 import pytest
 
+from bilihud import danmaku_client
 from bilihud.danmaku_client import DanmakuClient, DanmakuShutdownError
 from bilihud.live_emoticons import LiveEmoticon
 
@@ -14,6 +15,46 @@ def test_stop_catches_asyncio_timeout_error_for_python_310_compatibility():
 
     assert "except asyncio.TimeoutError" in source
     assert "except TimeoutError" not in source
+
+
+def test_start_starts_blivedm_client_before_returning(monkeypatch):
+    class FakeAuthManager:
+        def load_auth_cookies(self):
+            return {}, False
+
+        def create_session_from_cookies(self, _cookies):
+            return FakeSession()
+
+    class FakeBLiveClient:
+        def __init__(self, room_id, *, session):
+            self.room_id = room_id
+            self.session = session
+            self.start_calls = 0
+            self.handler = None
+
+        @property
+        def is_running(self):
+            return self.start_calls > 0
+
+        def set_handler(self, handler):
+            self.handler = handler
+
+        def start(self):
+            self.start_calls += 1
+
+    async def run_test():
+        monkeypatch.setattr(danmaku_client, "AuthManager", FakeAuthManager)
+        monkeypatch.setattr(danmaku_client.blivedm, "BLiveClient", FakeBLiveClient)
+
+        client = DanmakuClient(7450109)
+
+        await client.start()
+
+        assert client.client is not None
+        assert client.client.start_calls == 1
+        assert client.client.is_running is True
+
+    asyncio.run(run_test())
 
 
 class FakeSession:

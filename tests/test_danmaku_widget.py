@@ -1,4 +1,5 @@
 import ast
+import asyncio
 import os
 from pathlib import Path
 
@@ -391,6 +392,68 @@ def test_live_control_uses_anchor_room_and_reconnects_hud_source():
     assert "self._live_control_dialog.set_room_id(self.room_id)" not in source
     assert "await self._connect_to_room_id(anchor_room_id)" in source
     assert "self._live_control_dialog.set_ensure_hud_room_callback(self._connect_to_room_id)" in source
+
+
+def test_connect_to_room_replaces_stale_same_room_client(monkeypatch):
+    events = []
+
+    class RoomInput:
+        def __init__(self):
+            self.text = ""
+
+        def setText(self, text):
+            self.text = text
+
+    class StaleBLiveClient:
+        is_running = False
+
+    class StaleDanmakuClient:
+        client = StaleBLiveClient()
+
+    class NewDanmakuClient:
+        instances = []
+
+        def __init__(self, room_id, sessdata):
+            self.room_id = room_id
+            self.sessdata = sessdata
+            self.client = None
+            self.started = False
+            NewDanmakuClient.instances.append(self)
+
+        async def start(self):
+            self.started = True
+            self.client = type("RunningBLiveClient", (), {"is_running": True})()
+
+    async def run_test():
+        widget = danmaku_widget.DanmakuWidget.__new__(danmaku_widget.DanmakuWidget)
+        widget.room_id = 7450109
+        widget.sessdata = "sess"
+        widget.room_id_input = RoomInput()
+        widget.danmaku_client = StaleDanmakuClient()
+
+        async def disconnect_current_room():
+            events.append("disconnect")
+            widget.danmaku_client = None
+
+        widget._disconnect_current_room = disconnect_current_room
+        widget._wire_danmaku_client = lambda client: events.append(("wire", client.room_id))
+        widget._set_connecting_ui = lambda: events.append("connecting")
+        widget._set_connected_ui = lambda: events.append("connected")
+        widget._set_disconnected_ui = lambda: events.append("disconnected")
+
+        monkeypatch.setattr(danmaku_widget, "DanmakuClient", NewDanmakuClient)
+        monkeypatch.setattr(danmaku_widget, "save_config", lambda data: events.append(("save", data)))
+
+        await danmaku_widget.DanmakuWidget._connect_to_room_id(widget, 7450109)
+
+        assert events[0] == "disconnect"
+        assert widget.room_id == 7450109
+        assert widget.room_id_input.text == "7450109"
+        assert widget.danmaku_client is NewDanmakuClient.instances[0]
+        assert widget.danmaku_client.started is True
+        assert events[-1] == "connected"
+
+    asyncio.run(run_test())
 
 
 def test_live_control_start_live_ensures_hud_room_before_starting():

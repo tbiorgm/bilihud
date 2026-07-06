@@ -98,11 +98,7 @@ class DanmakuClient:
         self.handler.set_danmaku_client(self)
         self.client.set_handler(self.handler)
 
-        loop = asyncio.get_event_loop()
-        loop.call_soon(self.client.start)
-        # 启动客户端
-        # self.client.start()
-        # await asyncio.sleep(0.1)  # 让出控制权以启动客户端
+        self.client.start()
 
     async def send_danmaku(self, message: str) -> tuple[bool, str]:
         """发送弹幕"""

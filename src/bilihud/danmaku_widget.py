@@ -1553,11 +1553,16 @@ class DanmakuWidget(QWidget):
             QPushButton:checked { background-color: rgba(76, 175, 80, 150); }
         """)
 
+    def _has_active_danmaku_connection(self) -> bool:
+        if self.danmaku_client is None or self.danmaku_client.client is None:
+            return False
+        return bool(getattr(self.danmaku_client.client, "is_running", False))
+
     async def _connect_to_room_id(self, room_id: int):
         if room_id <= 0:
             raise ValueError("直播间号无效")
 
-        if self.danmaku_client is not None and self.danmaku_client.client and self.room_id == room_id:
+        if self._has_active_danmaku_connection() and self.room_id == room_id:
             self.room_id_input.setText(str(room_id))
             self._set_connected_ui()
             return
@@ -1595,7 +1600,7 @@ class DanmakuWidget(QWidget):
     @qasync.asyncSlot()
     async def toggle_connection(self):
         """切换连接状态"""
-        if self.danmaku_client is None or not self.danmaku_client.client:
+        if not self._has_active_danmaku_connection():
             # 连接
             try:
                 await self._connect_to_room_id(int(self.room_id_input.text()))
